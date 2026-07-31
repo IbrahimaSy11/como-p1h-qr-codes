@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         COMO P-1-H Scannable ID QR Codes
 // @namespace    https://github.com/uny2-ops
-// @version      1.1.0
+// @version      1.2.0
 // @description  On a cart/task detail page, finds every row whose Last Known Location starts with P-1-H and opens a printable tab of QR codes built from each row's Scannable ID
 // @author       Ibrahim
 // @homepageURL  https://github.com/IbrahimaSy11/como-p1h-qr-codes
@@ -462,13 +462,12 @@ function esc(s) {
                   .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-function openQRTab(items, win) {
+function buildTabHTML(items) {
   var cards = '', failed = [];
 
   for (var i = 0; i < items.length; i++) {
     var it = items[i], url;
     try {
-      /* NOTE: the QR value is the SCANNABLE ID — never the location. */
       url = qrDataURL(it.scannableId);
     } catch (e) {
       failed.push(it.location + ' (' + e.message + ')');
@@ -485,10 +484,9 @@ function openQRTab(items, win) {
   var warn = failed.length
     ? '<div class="warn">Skipped ' + failed.length + ': ' + esc(failed.join(', ')) + '</div>'
     : '';
-
   var stamp = new Date().toLocaleString();
 
-  var html =
+  return (
 '<!DOCTYPE html><html><head><meta charset="utf-8">' +
 '<title>' + esc(TARGET_PREFIX) + ' QR Codes (' + items.length + ')</title>' +
 '<style>' +
@@ -528,11 +526,40 @@ function openQRTab(items, win) {
 '</header>' +
 warn +
 '<div class="grid">' + cards + '</div>' +
-'</body></html>';
+'</body></html>'
+  );
+}
 
-  win.document.open();
-  win.document.write(html);
-  win.document.close();
+/* Write HTML to a tab; returns true on success, false if the write was blocked. */
+function writeToTab(win, html) {
+  try {
+    win.document.open();
+    win.document.write(html);
+    win.document.close();
+    /* Verify something actually landed — a blocked/sandboxed write leaves
+       the document empty or in a default state. */
+    return !!(win.document.body && win.document.body.innerHTML.length > 100);
+  } catch (e) {
+    return false;
+  }
+}
+
+function openQRTab(items, win) {
+  var html = buildTabHTML(items);
+  if (writeToTab(win, html)) return true;
+
+  /* Write failed (some browsers block document.write on cross-origin blobs).
+     Fall back to a Blob URL — no cross-origin restriction. */
+  try {
+    var blob = new Blob([html], { type: 'text/html' });
+    var url  = URL.createObjectURL(blob);
+    win.location.href = url;
+    /* Revoke after a generous delay so the page finishes loading. */
+    setTimeout(function () { try { URL.revokeObjectURL(url); } catch (e2) {} }, 60000);
+    return true;
+  } catch (e) {
+    return false;
+  }
 }
 
 
@@ -596,37 +623,81 @@ btn.addEventListener('mousedown', function (e) {
   document.addEventListener('mouseup', up);
 });
 
-btn.addEventListener('click', function () {
-  if (dragging) { dragging = false; return; }
+/* Maximum automatic retries if the new tab comes up blank. */
+var MAX_RETRIES = 3, RETRY_MS = 900;
+
+function doGenerate(attempt) {
+  if (attempt === undefined) attempt = 0;
 
   var res = scrapeRows();
 
-  if (res.error)          { toast(res.error, true); return; }
-  if (!res.items.length)  {
-    toast('No rows found with a Last Known Location starting with ' + TARGET_PREFIX +
-          ' (scanned ' + res.total + ' row' + (res.total === 1 ? '' : 's') + ').', true);
+  if (res.error) { toast(res.error, true); resetBtn(); return; }
+  if (!res.items.length) {
+    /* Table may not have loaded yet — retry silently a few times
+       before giving up with a message. */
+    if (attempt < MAX_RETRIES) {
+      setTimeout(function () { doGenerate(attempt + 1); }, RETRY_MS);
+      return;
+    }
+    toast('No ' + TARGET_PREFIX + ' rows found after ' + (attempt + 1) + ' attempts ' +
+          '(scanned ' + res.total + ' row' + (res.total === 1 ? '' : 's') + ').', true);
+    resetBtn();
     return;
   }
 
-  /* open synchronously inside the click so the popup blocker allows it */
+  /* Open the tab synchronously (inside a user gesture) to beat popup blockers.
+     If it fails, wait and try once more — some browsers allow it on retry. */
   var win = window.open('', '_blank');
-  if (!win) { toast('Popup blocked — allow popups for this site and try again.', true); return; }
-
-  btn.classList.add('busy');
-  btn.textContent = '\u23F3 building\u2026';
+  if (!win) {
+    if (attempt < 1) {
+      toast('Opening tab — if nothing appears, click again.', false);
+      setTimeout(function () { doGenerate(attempt + 1); }, 800);
+      return;
+    }
+    toast('Popup blocked — allow popups for this site in the address bar, then click again.', true);
+    resetBtn();
+    return;
+  }
 
   setTimeout(function () {
+    var ok = false;
     try {
-      openQRTab(res.items, win);
-      toast(res.items.length + ' QR code' + (res.items.length === 1 ? '' : 's') +
-            ' opened in a new tab (from ' + res.total + ' rows).');
+      ok = openQRTab(res.items, win);
     } catch (e) {
-      toast('Failed to build QR codes: ' + e.message, true);
-      try { win.close(); } catch (e2) {}
+      ok = false;
     }
-    btn.classList.remove('busy');
-    btn.textContent = '\u2318 QR: ' + TARGET_PREFIX;
+
+    if (ok) {
+      toast(res.items.length + ' QR code' + (res.items.length === 1 ? '' : 's') +
+            ' opened in a new tab.', false);
+      resetBtn();
+      return;
+    }
+
+    /* Tab opened but write failed — close it, wait, retry. */
+    try { win.close(); } catch (e2) {}
+
+    if (attempt < MAX_RETRIES) {
+      toast('Tab loaded blank — retrying (' + (attempt + 1) + '/' + MAX_RETRIES + ')\u2026', false);
+      setTimeout(function () { doGenerate(attempt + 1); }, RETRY_MS);
+    } else {
+      toast('Could not write to the new tab after ' + (attempt + 1) + ' tries. ' +
+            'Try disabling any extensions that block scripts on new tabs.', true);
+      resetBtn();
+    }
   }, 0);
+}
+
+function resetBtn() {
+  btn.classList.remove('busy');
+  btn.textContent = '\u2318 QR: ' + TARGET_PREFIX;
+}
+
+btn.addEventListener('click', function () {
+  if (dragging) { dragging = false; return; }
+  btn.classList.add('busy');
+  btn.textContent = '\u23F3 building\u2026';
+  doGenerate(0);
 });
 
 /* ══════════════════════════════════════════════════════════
@@ -712,6 +783,6 @@ new MutationObserver(function () {
 
 updateVisibility();
 
-console.log('[P1H-QR] v1.1.0 loaded — QR value = Scannable ID, prefix filter = ' + TARGET_PREFIX);
+console.log('[P1H-QR] v1.2.0 loaded — QR value = Scannable ID, prefix filter = ' + TARGET_PREFIX);
 
 })();
