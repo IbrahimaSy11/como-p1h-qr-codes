@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         COMO P-1-H Scannable ID QR Codes
 // @namespace    https://github.com/uny2-ops
-// @version      1.3.4
+// @version      1.3.5
 // @description  Finds P-1-H Scannable IDs, opens a printable QR grid, and lets you click one QR to scan it alone with left/right navigation
 // @author       Ibrahim
 // @homepageURL  https://github.com/IbrahimaSy11/como-p1h-qr-codes
@@ -529,23 +529,23 @@ function buildTabHTML(items) {
 '.viewer{position:fixed;inset:0;z-index:999999;background:rgba(0,0,0,.82);' +
   'display:none;align-items:center;justify-content:center;padding:24px}' +
 '.viewer.open{display:flex}' +
-'.viewer-box{position:relative;width:min(86vw,600px);max-height:90vh;background:#fff;color:#111;' +
-  'border-radius:14px;padding:22px 76px 20px;text-align:center;box-shadow:0 18px 60px rgba(0,0,0,.45);' +
+'.viewer-box{position:relative;width:min(76vw,460px);max-height:78vh;background:#fff;color:#111;' +
+  'border-radius:8px;padding:14px 58px 12px;text-align:center;box-shadow:0 14px 40px rgba(0,0,0,.42);' +
   'display:flex;flex-direction:column;align-items:center;justify-content:center}' +
-'.viewer-qr{display:block;width:min(52vh,420px);height:auto;max-width:100%;' +
+'.viewer-qr{display:block;width:min(34vh,260px);height:auto;max-width:100%;' +
   'object-fit:contain;background:#fff}' +
-'.viewer-loc{margin-top:12px;font-size:22px;font-weight:900;line-height:1.2;word-break:break-all}' +
-'.viewer-sid{margin-top:5px;font-family:"SF Mono",Consolas,monospace;font-size:13px;color:#555;word-break:break-all}' +
-'.viewer-count{margin-top:8px;font-size:12px;font-weight:700;color:#777}' +
-'.viewer-close{position:absolute;top:10px;right:12px;width:40px;height:40px;padding:0;' +
-  'border-radius:50%;background:#111;color:#fff;font-size:24px;line-height:40px}' +
+'.viewer-loc{margin-top:8px;font-size:17px;font-weight:900;line-height:1.15;word-break:break-all}' +
+'.viewer-sid{margin-top:3px;font-family:"SF Mono",Consolas,monospace;font-size:10px;color:#555;word-break:break-all}' +
+'.viewer-count{margin-top:5px;font-size:10px;font-weight:700;color:#777}' +
+'.viewer-close{position:absolute;top:8px;right:8px;width:32px;height:32px;padding:0;' +
+  'border-radius:6px;background:#111;color:#fff;font-size:20px;line-height:32px}' +
 '.viewer-close:hover{background:#333}' +
-'.viewer-nav{position:absolute;top:50%;transform:translateY(-50%);width:50px;height:72px;' +
-  'padding:0;border-radius:10px;background:#111;color:#fff;font-size:34px;line-height:1}' +
-'.viewer-prev{left:12px}.viewer-next{right:12px}' +
+'.viewer-nav{position:absolute;top:50%;transform:translateY(-50%);width:36px;height:54px;' +
+  'padding:0;border-radius:6px;background:#111;color:#fff;font-size:26px;line-height:1}' +
+'.viewer-prev{left:9px}.viewer-next{right:9px}' +
 '.viewer-help{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);' +
   'color:#fff;font-size:12px;font-weight:700;opacity:.85;white-space:nowrap}' +
-'@media(max-width:560px){.viewer{padding:10px}.viewer-box{padding:52px 56px 18px}.viewer-nav{width:42px;height:60px}.viewer-prev{left:7px}.viewer-next{right:7px}.viewer-loc{font-size:18px}}' +
+'@media(max-width:560px){.viewer{padding:8px}.viewer-box{width:min(92vw,420px);padding:42px 48px 12px}.viewer-qr{width:min(31vh,230px)}.viewer-nav{width:34px;height:50px}.viewer-prev{left:6px}.viewer-next{right:6px}.viewer-loc{font-size:16px}}' +
 '@media print{' +
   'body{padding:0}' +
   '.no-print,.viewer{display:none !important}' +
@@ -905,6 +905,6 @@ new MutationObserver(function () {
 
 updateVisibility();
 
-console.log('[P1H-QR] v1.3.4 loaded — QR value = Scannable ID, prefix filter = ' + TARGET_PREFIX);
+console.log('[P1H-QR] v1.3.5 loaded — QR value = Scannable ID, prefix filter = ' + TARGET_PREFIX);
 
 })();
