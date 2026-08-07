@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         COMO P-1-H Scannable ID QR Codes
 // @namespace    https://github.com/uny2-ops
-// @version      1.2.0
-// @description  On a cart/task detail page, finds every row whose Last Known Location starts with P-1-H and opens a printable tab of QR codes built from each row's Scannable ID
+// @version      1.3.1
+// @description  Finds P-1-H Scannable IDs, opens a printable QR grid, and lets you click one QR to scan it alone with left/right navigation
 // @author       Ibrahim
 // @homepageURL  https://github.com/IbrahimaSy11/como-p1h-qr-codes
 // @supportURL   https://github.com/IbrahimaSy11/como-p1h-qr-codes/issues
@@ -474,8 +474,9 @@ function buildTabHTML(items) {
       continue;
     }
     cards +=
-      '<div class="card">' +
-        '<img src="' + url + '" alt="QR for ' + esc(it.scannableId) + '">' +
+      '<div class="card" data-index="' + i + '">' +
+        '<img class="qr-img" src="' + url + '" alt="QR for ' + esc(it.scannableId) + '" ' +
+          'title="Click to open this QR by itself">' +
         '<div class="loc">' + esc(it.location) + '</div>' +
         '<div class="sid">' + esc(it.scannableId) + '</div>' +
       '</div>';
@@ -510,9 +511,31 @@ function buildTabHTML(items) {
 '.loc{font-size:16px;font-weight:800;letter-spacing:.02em;word-break:break-all;line-height:1.25}' +
 '.sid{font-family:"SF Mono",Consolas,monospace;font-size:10.5px;color:#666;' +
   'margin-top:4px;word-break:break-all}' +
+'.qr-img{cursor:zoom-in;border-radius:4px;transition:transform .15s ease,box-shadow .15s ease}' +
+'.qr-img:hover{transform:scale(1.025);box-shadow:0 4px 14px rgba(0,0,0,.14)}' +
+'.viewer{position:fixed;inset:0;z-index:999999;background:rgba(0,0,0,.82);' +
+  'display:none;align-items:center;justify-content:center;padding:24px}' +
+'.viewer.open{display:flex}' +
+'.viewer-box{position:relative;width:min(86vw,600px);max-height:90vh;background:#fff;color:#111;' +
+  'border-radius:14px;padding:22px 76px 20px;text-align:center;box-shadow:0 18px 60px rgba(0,0,0,.45);' +
+  'display:flex;flex-direction:column;align-items:center;justify-content:center}' +
+'.viewer-qr{display:block;width:min(52vh,420px);height:auto;max-width:100%;' +
+  'image-rendering:pixelated;image-rendering:crisp-edges;background:#fff}' +
+'.viewer-loc{margin-top:12px;font-size:22px;font-weight:900;line-height:1.2;word-break:break-all}' +
+'.viewer-sid{margin-top:5px;font-family:"SF Mono",Consolas,monospace;font-size:13px;color:#555;word-break:break-all}' +
+'.viewer-count{margin-top:8px;font-size:12px;font-weight:700;color:#777}' +
+'.viewer-close{position:absolute;top:10px;right:12px;width:40px;height:40px;padding:0;' +
+  'border-radius:50%;background:#111;color:#fff;font-size:24px;line-height:40px}' +
+'.viewer-close:hover{background:#333}' +
+'.viewer-nav{position:absolute;top:50%;transform:translateY(-50%);width:50px;height:72px;' +
+  'padding:0;border-radius:10px;background:#111;color:#fff;font-size:34px;line-height:1}' +
+'.viewer-prev{left:12px}.viewer-next{right:12px}' +
+'.viewer-help{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);' +
+  'color:#fff;font-size:12px;font-weight:700;opacity:.85;white-space:nowrap}' +
+'@media(max-width:560px){.viewer{padding:10px}.viewer-box{padding:52px 56px 18px}.viewer-nav{width:42px;height:60px}.viewer-prev{left:7px}.viewer-next{right:7px}.viewer-loc{font-size:18px}}' +
 '@media print{' +
   'body{padding:0}' +
-  '.no-print{display:none !important}' +
+  '.no-print,.viewer{display:none !important}' +
   'header{border-bottom:1px solid #000;margin-bottom:12px;padding-bottom:8px}' +
   '.grid{grid-template-columns:repeat(3,1fr);gap:12px}' +
   '.card{border:1px solid #999}' +
@@ -521,11 +544,60 @@ function buildTabHTML(items) {
 '</style></head><body>' +
 '<header>' +
   '<div><h1>' + esc(TARGET_PREFIX) + ' &mdash; ' + items.length + ' QR code' + (items.length === 1 ? '' : 's') + '</h1>' +
-  '<div class="meta">QR value = Scannable ID &middot; generated ' + esc(stamp) + '</div></div>' +
+  '<div class="meta">QR value = Scannable ID &middot; click any QR to scan it alone &middot; generated ' + esc(stamp) + '</div></div>' +
   '<button class="no-print" onclick="window.print()">Print</button>' +
 '</header>' +
 warn +
 '<div class="grid">' + cards + '</div>' +
+'<div id="qr-viewer" class="viewer no-print" aria-hidden="true">' +
+  '<div class="viewer-box" role="dialog" aria-modal="true" aria-label="Single QR code viewer">' +
+    '<button id="viewer-close" class="viewer-close" type="button" title="Close">&times;</button>' +
+    '<button id="viewer-prev" class="viewer-nav viewer-prev" type="button" title="Previous QR">&#8249;</button>' +
+    '<img id="viewer-qr" class="viewer-qr" alt="Selected QR code">' +
+    '<div id="viewer-loc" class="viewer-loc"></div>' +
+    '<div id="viewer-sid" class="viewer-sid"></div>' +
+    '<div id="viewer-count" class="viewer-count"></div>' +
+    '<button id="viewer-next" class="viewer-nav viewer-next" type="button" title="Next QR">&#8250;</button>' +
+  '</div>' +
+  '<div class="viewer-help">Left / Right arrows = next QR &nbsp;&middot;&nbsp; Esc = close</div>' +
+'</div>' +
+'<script>' +
+'(function(){' +
+  'var cards=Array.prototype.slice.call(document.querySelectorAll(".card"));' +
+  'var viewer=document.getElementById("qr-viewer");' +
+  'var box=viewer.querySelector(".viewer-box");' +
+  'var qr=document.getElementById("viewer-qr");' +
+  'var loc=document.getElementById("viewer-loc");' +
+  'var sid=document.getElementById("viewer-sid");' +
+  'var count=document.getElementById("viewer-count");' +
+  'var current=0;' +
+  'function show(i){' +
+    'if(!cards.length)return;' +
+    'current=(i+cards.length)%cards.length;' +
+    'var card=cards[current];' +
+    'var img=card.querySelector(".qr-img");' +
+    'qr.src=img.src;' +
+    'qr.alt=img.alt;' +
+    'loc.textContent=card.querySelector(".loc").textContent;' +
+    'sid.textContent=card.querySelector(".sid").textContent;' +
+    'count.textContent=(current+1)+" / "+cards.length;' +
+  '}' +
+  'function openAt(i){show(i);viewer.classList.add("open");viewer.setAttribute("aria-hidden","false");document.body.style.overflow="hidden";document.getElementById("viewer-close").focus();}' +
+  'function closeViewer(){viewer.classList.remove("open");viewer.setAttribute("aria-hidden","true");document.body.style.overflow="";}' +
+  'cards.forEach(function(card,i){var img=card.querySelector(".qr-img");img.addEventListener("click",function(){openAt(i);});});' +
+  'document.getElementById("viewer-prev").addEventListener("click",function(){show(current-1);});' +
+  'document.getElementById("viewer-next").addEventListener("click",function(){show(current+1);});' +
+  'document.getElementById("viewer-close").addEventListener("click",closeViewer);' +
+  'viewer.addEventListener("click",function(e){if(e.target===viewer)closeViewer();});' +
+  'box.addEventListener("click",function(e){e.stopPropagation();});' +
+  'document.addEventListener("keydown",function(e){' +
+    'if(!viewer.classList.contains("open"))return;' +
+    'if(e.key==="ArrowLeft"){e.preventDefault();show(current-1);}' +
+    'else if(e.key==="ArrowRight"){e.preventDefault();show(current+1);}' +
+    'else if(e.key==="Escape"){e.preventDefault();closeViewer();}' +
+  '});' +
+'})();' +
+'<\/script>' +
 '</body></html>'
   );
 }
@@ -783,6 +855,6 @@ new MutationObserver(function () {
 
 updateVisibility();
 
-console.log('[P1H-QR] v1.2.0 loaded — QR value = Scannable ID, prefix filter = ' + TARGET_PREFIX);
+console.log('[P1H-QR] v1.3.1 loaded — QR value = Scannable ID, prefix filter = ' + TARGET_PREFIX);
 
 })();
