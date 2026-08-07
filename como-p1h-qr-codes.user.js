@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         COMO P-1-H Scannable ID QR Codes
 // @namespace    https://github.com/uny2-ops
-// @version      1.3.3
+// @version      1.3.4
 // @description  Finds P-1-H Scannable IDs, opens a printable QR grid, and lets you click one QR to scan it alone with left/right navigation
 // @author       Ibrahim
 // @homepageURL  https://github.com/IbrahimaSy11/como-p1h-qr-codes
@@ -360,23 +360,36 @@ function buildQR(text, eccLevel) {
   return { matrix: best, size: size, version: version };
 }
 
-/* Render a value to a PNG data URL */
+/* Render a value as a vector SVG data URL.
+   SVG keeps each QR module perfectly square when the browser is zoomed or the
+   popup is resized, avoiding raster resampling/moire that can make codes look
+   corrupted or difficult to scan. */
 function qrDataURL(value) {
   var qr = buildQR(value, ECC_LEVEL);
-  var dim = (qr.size + QUIET_ZONE * 2) * MODULE_PX;
-  var cv = document.createElement('canvas');
-  cv.width = dim; cv.height = dim;
-  var g = cv.getContext('2d');
-  g.fillStyle = '#ffffff'; g.fillRect(0, 0, dim, dim);
-  g.fillStyle = '#000000';
+  var totalModules = qr.size + QUIET_ZONE * 2;
+  var naturalPx = totalModules * MODULE_PX;
+  var path = [];
+
   for (var r = 0; r < qr.size; r++) {
     for (var c = 0; c < qr.size; c++) {
       if (qr.matrix[r][c]) {
-        g.fillRect((c + QUIET_ZONE) * MODULE_PX, (r + QUIET_ZONE) * MODULE_PX, MODULE_PX, MODULE_PX);
+        var x = c + QUIET_ZONE;
+        var y = r + QUIET_ZONE;
+        path.push('M' + x + ' ' + y + 'h1v1h-1z');
       }
     }
   }
-  return cv.toDataURL('image/png');
+
+  var svg =
+    '<svg xmlns="http://www.w3.org/2000/svg" ' +
+      'width="' + naturalPx + '" height="' + naturalPx + '" ' +
+      'viewBox="0 0 ' + totalModules + ' ' + totalModules + '" ' +
+      'preserveAspectRatio="xMidYMid meet" shape-rendering="crispEdges">' +
+      '<rect width="' + totalModules + '" height="' + totalModules + '" fill="#fff"/>' +
+      '<path d="' + path.join('') + '" fill="#000"/>' +
+    '</svg>';
+
+  return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
 }
 
 
@@ -507,7 +520,7 @@ function buildTabHTML(items) {
 '.card{border:1px solid #ccc;border-radius:9px;padding:12px 10px 10px;text-align:center;' +
   'background:#fff;break-inside:avoid;page-break-inside:avoid}' +
 '.card img{width:100%;max-width:190px;height:auto;display:block;margin:0 auto 9px;' +
-  'image-rendering:pixelated;image-rendering:crisp-edges}' +
+  'object-fit:contain}' +
 '.loc{font-size:16px;font-weight:800;letter-spacing:.02em;word-break:break-all;line-height:1.25}' +
 '.sid{font-family:"SF Mono",Consolas,monospace;font-size:10.5px;color:#666;' +
   'margin-top:4px;word-break:break-all}' +
@@ -520,7 +533,7 @@ function buildTabHTML(items) {
   'border-radius:14px;padding:22px 76px 20px;text-align:center;box-shadow:0 18px 60px rgba(0,0,0,.45);' +
   'display:flex;flex-direction:column;align-items:center;justify-content:center}' +
 '.viewer-qr{display:block;width:min(52vh,420px);height:auto;max-width:100%;' +
-  'image-rendering:pixelated;image-rendering:crisp-edges;background:#fff}' +
+  'object-fit:contain;background:#fff}' +
 '.viewer-loc{margin-top:12px;font-size:22px;font-weight:900;line-height:1.2;word-break:break-all}' +
 '.viewer-sid{margin-top:5px;font-family:"SF Mono",Consolas,monospace;font-size:13px;color:#555;word-break:break-all}' +
 '.viewer-count{margin-top:8px;font-size:12px;font-weight:700;color:#777}' +
@@ -892,6 +905,6 @@ new MutationObserver(function () {
 
 updateVisibility();
 
-console.log('[P1H-QR] v1.3.3 loaded — QR value = Scannable ID, prefix filter = ' + TARGET_PREFIX);
+console.log('[P1H-QR] v1.3.4 loaded — QR value = Scannable ID, prefix filter = ' + TARGET_PREFIX);
 
 })();
