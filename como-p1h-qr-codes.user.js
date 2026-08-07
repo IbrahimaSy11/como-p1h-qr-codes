@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         COMO P-1-H Scannable ID QR Codes
 // @namespace    https://github.com/uny2-ops
-// @version      1.3.2
+// @version      1.3.3
 // @description  Finds P-1-H Scannable IDs, opens a printable QR grid, and lets you click one QR to scan it alone with left/right navigation
 // @author       Ibrahim
 // @homepageURL  https://github.com/IbrahimaSy11/como-p1h-qr-codes
@@ -596,6 +596,7 @@ warn +
     'else if(e.key==="ArrowRight"){e.preventDefault();show(current+1);}' +
     'else if(e.key==="Escape"){e.preventDefault();closeViewer();}' +
   '});' +
+  'if(cards.length){setTimeout(function(){openAt(0);},0);}' +
 '})();' +
 '<\/script>' +
 '</body></html>'
@@ -891,6 +892,6 @@ new MutationObserver(function () {
 
 updateVisibility();
 
-console.log('[P1H-QR] v1.3.2 loaded — QR value = Scannable ID, prefix filter = ' + TARGET_PREFIX);
+console.log('[P1H-QR] v1.3.3 loaded — QR value = Scannable ID, prefix filter = ' + TARGET_PREFIX);
 
 })();
