@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         COMO P-1-H Scannable ID QR Codes
 // @namespace    https://github.com/uny2-ops
-// @version      1.3.1
+// @version      1.3.2
 // @description  Finds P-1-H Scannable IDs, opens a printable QR grid, and lets you click one QR to scan it alone with left/right navigation
 // @author       Ibrahim
 // @homepageURL  https://github.com/IbrahimaSy11/como-p1h-qr-codes
@@ -698,19 +698,38 @@ btn.addEventListener('mousedown', function (e) {
 /* Maximum automatic retries if the new tab comes up blank. */
 var MAX_RETRIES = 3, RETRY_MS = 900;
 
-function doGenerate(attempt) {
+/* Every QR-generation click gets its own session id. Navigating away
+   invalidates that id, so delayed retries/errors from the previous cart
+   cannot appear later on the main dashboard. */
+var generationSession = 0;
+
+function generationStillCurrent(sessionId) {
+  return sessionId === generationSession;
+}
+
+function doGenerate(attempt, sessionId) {
   if (attempt === undefined) attempt = 0;
+  if (sessionId === undefined) sessionId = generationSession;
+  if (!generationStillCurrent(sessionId)) return;
 
   var res = scrapeRows();
 
-  if (res.error) { toast(res.error, true); resetBtn(); return; }
+  if (!generationStillCurrent(sessionId)) return;
+
+  if (res.error) {
+    if (!generationStillCurrent(sessionId)) return;
+    toast(res.error, true); resetBtn(); return;
+  }
   if (!res.items.length) {
     /* Table may not have loaded yet — retry silently a few times
        before giving up with a message. */
     if (attempt < MAX_RETRIES) {
-      setTimeout(function () { doGenerate(attempt + 1); }, RETRY_MS);
+      setTimeout(function () {
+        if (generationStillCurrent(sessionId)) doGenerate(attempt + 1, sessionId);
+      }, RETRY_MS);
       return;
     }
+    if (!generationStillCurrent(sessionId)) return;
     toast('No ' + TARGET_PREFIX + ' rows found after ' + (attempt + 1) + ' attempts ' +
           '(scanned ' + res.total + ' row' + (res.total === 1 ? '' : 's') + ').', true);
     resetBtn();
@@ -722,16 +741,24 @@ function doGenerate(attempt) {
   var win = window.open('', '_blank');
   if (!win) {
     if (attempt < 1) {
+      if (!generationStillCurrent(sessionId)) return;
       toast('Opening tab — if nothing appears, click again.', false);
-      setTimeout(function () { doGenerate(attempt + 1); }, 800);
+      setTimeout(function () {
+        if (generationStillCurrent(sessionId)) doGenerate(attempt + 1, sessionId);
+      }, 800);
       return;
     }
+    if (!generationStillCurrent(sessionId)) return;
     toast('Popup blocked — allow popups for this site in the address bar, then click again.', true);
     resetBtn();
     return;
   }
 
   setTimeout(function () {
+    if (!generationStillCurrent(sessionId)) {
+      try { win.close(); } catch (e0) {}
+      return;
+    }
     var ok = false;
     try {
       ok = openQRTab(res.items, win);
@@ -740,6 +767,7 @@ function doGenerate(attempt) {
     }
 
     if (ok) {
+      if (!generationStillCurrent(sessionId)) return;
       toast(res.items.length + ' QR code' + (res.items.length === 1 ? '' : 's') +
             ' opened in a new tab.', false);
       resetBtn();
@@ -749,9 +777,12 @@ function doGenerate(attempt) {
     /* Tab opened but write failed — close it, wait, retry. */
     try { win.close(); } catch (e2) {}
 
+    if (!generationStillCurrent(sessionId)) return;
     if (attempt < MAX_RETRIES) {
       toast('Tab loaded blank — retrying (' + (attempt + 1) + '/' + MAX_RETRIES + ')\u2026', false);
-      setTimeout(function () { doGenerate(attempt + 1); }, RETRY_MS);
+      setTimeout(function () {
+        if (generationStillCurrent(sessionId)) doGenerate(attempt + 1, sessionId);
+      }, RETRY_MS);
     } else {
       toast('Could not write to the new tab after ' + (attempt + 1) + ' tries. ' +
             'Try disabling any extensions that block scripts on new tabs.', true);
@@ -767,9 +798,11 @@ function resetBtn() {
 
 btn.addEventListener('click', function () {
   if (dragging) { dragging = false; return; }
+  generationSession++;
+  var thisSession = generationSession;
   btn.classList.add('busy');
   btn.textContent = '\u23F3 building\u2026';
-  doGenerate(0);
+  doGenerate(0, thisSession);
 });
 
 /* ══════════════════════════════════════════════════════════
@@ -812,9 +845,12 @@ function updateVisibility() {
 
 /* On navigation: hide instantly, drop the cache, then re-evaluate. */
 function onNavigate() {
+  generationSession++;             /* cancel retries/errors from the page we just left */
   setVisible(false);
   tblAt = 0; tblRes = false;
+  clearTimeout(toastTimer);
   toastEl.className = '';          /* don't leave a stale message behind */
+  resetBtn();
   updateVisibility();
 }
 
@@ -855,6 +891,6 @@ new MutationObserver(function () {
 
 updateVisibility();
 
-console.log('[P1H-QR] v1.3.1 loaded — QR value = Scannable ID, prefix filter = ' + TARGET_PREFIX);
+console.log('[P1H-QR] v1.3.2 loaded — QR value = Scannable ID, prefix filter = ' + TARGET_PREFIX);
 
 })();
