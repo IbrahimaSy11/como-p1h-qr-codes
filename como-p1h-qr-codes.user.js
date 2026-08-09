@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         COMO P-1-H Scannable ID QR Codes
 // @namespace    https://github.com/uny2-ops
-// @version      1.3.6
-// @description  Finds P-1-H Scannable IDs, opens a printable QR grid, and lets you click one QR to scan it alone with left/right navigation
+// @version      1.4.3
+// @description  Modern P-1-H QR workspace with reliable popup handling, live count, printable grid, and fast single-QR scan mode
 // @author       Ibrahim
 // @homepageURL  https://github.com/IbrahimaSy11/como-p1h-qr-codes
 // @supportURL   https://github.com/IbrahimaSy11/como-p1h-qr-codes/issues
@@ -400,14 +400,32 @@ function norm(s) {
   return (s || '').replace(/\s+/g, ' ').trim().toLowerCase();
 }
 
-/* Locate the table plus the two column indices we need. */
+function cleanCellText(cell) {
+  return (cell && cell.textContent ? cell.textContent : '').replace(/\s+/g, ' ').trim();
+}
+
+function isVisibleElement(el) {
+  if (!el || !el.isConnected) return false;
+  try {
+    var style = getComputedStyle(el);
+    if (style.display === 'none' || style.visibility === 'hidden') return false;
+    var r = el.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
+  } catch (e) {
+    return true;
+  }
+}
+
+/* Locate the best table plus the two column indices we need.
+   If Angular leaves an old hidden table behind, prefer the visible one. */
 function findTable() {
   var tables = document.querySelectorAll('table');
+  var fallback = null;
+
   for (var t = 0; t < tables.length; t++) {
     var table = tables[t];
-
-    /* header cells: prefer <th>, else the first row's cells */
-    var heads = table.querySelectorAll('thead th, thead td');
+    var heads = table.querySelectorAll('thead tr:last-child th, thead tr:last-child td');
+    if (!heads.length) heads = table.querySelectorAll('thead th, thead td');
     if (!heads.length) heads = table.querySelectorAll('th');
     if (!heads.length) {
       var firstRow = table.querySelector('tr');
@@ -421,41 +439,46 @@ function findTable() {
       if (locIdx === -1 && txt.indexOf(COL_LOCATION) !== -1) locIdx = h;
       if (idIdx === -1 && txt.indexOf(COL_SCANNABLE) !== -1) idIdx = h;
     }
-    if (locIdx !== -1 && idIdx !== -1) {
-      return { table: table, locIdx: locIdx, idIdx: idIdx, headerCount: heads.length };
-    }
+
+    if (locIdx === -1 || idIdx === -1) continue;
+
+    var match = { table: table, locIdx: locIdx, idIdx: idIdx, headerCount: heads.length };
+    if (isVisibleElement(table)) return match;
+    if (!fallback) fallback = match;
   }
-  return null;
+
+  return fallback;
 }
 
 /* Returns { items:[{location, scannableId}], total, error } */
 function scrapeRows() {
   var found = findTable();
   if (!found) {
-    return { items: [], total: 0, error:
-      'Could not find a table containing both a "Last Known Location" and a "Scannable ID" column on this page.' };
+    return {
+      items: [],
+      total: 0,
+      error: 'The item table is not ready yet.'
+    };
   }
 
   var rows = found.table.querySelectorAll('tbody tr');
   if (!rows.length) rows = found.table.querySelectorAll('tr');
 
-  var seen = {}, items = [], total = 0;
+  var seen = Object.create(null), items = [], total = 0;
+  var prefix = TARGET_PREFIX.toUpperCase();
+  var maxIdx = Math.max(found.locIdx, found.idIdx);
 
   for (var i = 0; i < rows.length; i++) {
     var cells = rows[i].querySelectorAll('td');
-    if (!cells.length) continue;                                  /* header row */
-    if (cells.length <= Math.max(found.locIdx, found.idIdx)) continue;
+    if (!cells.length || cells.length <= maxIdx) continue;
 
-    var locRaw = (cells[found.locIdx].textContent || '').replace(/\s+/g, ' ').trim();
-    var idRaw  = (cells[found.idIdx].textContent  || '').replace(/\s+/g, ' ').trim();
+    var locRaw = cleanCellText(cells[found.locIdx]);
+    var idRaw  = cleanCellText(cells[found.idIdx]);
     if (!locRaw || !idRaw) continue;
 
     total++;
+    if (locRaw.toUpperCase().indexOf(prefix) !== 0) continue;
 
-    /* Location must BEGIN WITH the target prefix */
-    if (locRaw.toUpperCase().indexOf(TARGET_PREFIX.toUpperCase()) !== 0) continue;
-
-    /* de-duplicate on the location + scannable ID pair */
     var key = locRaw.toUpperCase() + '\u0000' + idRaw.toUpperCase();
     if (seen[key]) continue;
     seen[key] = true;
@@ -472,158 +495,207 @@ function scrapeRows() {
 ══════════════════════════════════════════════════════════ */
 function esc(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
-                  .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+                  .replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+                  .replace(/'/g, '&#39;');
 }
 
 function buildTabHTML(items) {
-  var cards = '', failed = [];
+  var cards = '', failed = [], rendered = 0;
+  var qrCache = Object.create(null);
 
   for (var i = 0; i < items.length; i++) {
     var it = items[i], url;
     try {
-      url = qrDataURL(it.scannableId);
+      if (qrCache[it.scannableId]) url = qrCache[it.scannableId];
+      else {
+        url = qrDataURL(it.scannableId);
+        qrCache[it.scannableId] = url;
+      }
     } catch (e) {
       failed.push(it.location + ' (' + e.message + ')');
       continue;
     }
+
+    var cardIndex = rendered++;
     cards +=
-      '<div class="card" data-index="' + i + '">' +
-        '<img class="qr-img" src="' + url + '" alt="QR for ' + esc(it.scannableId) + '" ' +
-          'title="Click to open this QR by itself">' +
+      '<article class="card" data-index="' + cardIndex + '">' +
+        '<div class="card-top"><span class="card-num">' + String(cardIndex + 1).padStart(2, '0') + '</span>' +
+          '<span class="card-tag">' + esc(TARGET_PREFIX) + '</span></div>' +
+        '<button class="qr-open" type="button" aria-label="Open QR for ' + esc(it.location) + '">' +
+          '<img class="qr-img" src="' + url + '" alt="QR for ' + esc(it.scannableId) + '">' +
+        '</button>' +
         '<div class="loc">' + esc(it.location) + '</div>' +
         '<div class="sid">' + esc(it.scannableId) + '</div>' +
-      '</div>';
+      '</article>';
   }
 
   var warn = failed.length
-    ? '<div class="warn">Skipped ' + failed.length + ': ' + esc(failed.join(', ')) + '</div>'
+    ? '<div class="warn" role="alert"><strong>' + failed.length + ' QR' + (failed.length === 1 ? '' : 's') +
+      ' skipped.</strong> ' + esc(failed.join(', ')) + '</div>'
     : '';
   var stamp = new Date().toLocaleString();
+  var countLabel = rendered + ' QR code' + (rendered === 1 ? '' : 's');
 
   return (
-'<!DOCTYPE html><html><head><meta charset="utf-8">' +
-'<title>' + esc(TARGET_PREFIX) + ' QR Codes (' + items.length + ')</title>' +
+'<!DOCTYPE html><html lang="en" data-p1hqr-workspace="1"><head><meta charset="utf-8">' +
+'<meta name="viewport" content="width=device-width,initial-scale=1">' +
+'<title>' + esc(TARGET_PREFIX) + ' QR Codes (' + rendered + ')</title>' +
 '<style>' +
+':root{--ink:#111827;--muted:#6b7280;--line:#e5e7eb;--soft:#f6f7f9;--blue:#2563eb;--blue2:#1d4ed8;--danger:#b42318;--radius:14px}' +
+'#p1hqr-btn,#p1hqr-toast{display:none!important}' +
 '*{box-sizing:border-box}' +
-'body{margin:0;padding:20px 24px 32px;background:#fff;color:#111;' +
-  'font-family:-apple-system,"Segoe UI","Helvetica Neue",Arial,sans-serif}' +
-'header{display:flex;align-items:center;justify-content:space-between;gap:16px;' +
-  'padding-bottom:14px;border-bottom:2px solid #111;margin-bottom:20px}' +
-'h1{margin:0;font-size:19px;letter-spacing:.02em}' +
-'.meta{font-size:12px;color:#666;margin-top:3px}' +
-'button{font:inherit;font-size:14px;font-weight:700;padding:9px 18px;cursor:pointer;' +
-  'background:#111;color:#fff;border:none;border-radius:7px}' +
-'button:hover{background:#333}' +
-'.warn{background:#fff3cd;border:1px solid #ffc107;border-radius:7px;padding:9px 12px;' +
-  'font-size:13px;color:#856404;margin-bottom:16px}' +
-'.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(215px,1fr));gap:18px}' +
-'.card{border:1px solid #ccc;border-radius:9px;padding:12px 10px 10px;text-align:center;' +
-  'background:#fff;break-inside:avoid;page-break-inside:avoid}' +
-'.card img{width:100%;max-width:190px;height:auto;display:block;margin:0 auto 9px;' +
-  'object-fit:contain}' +
-'.loc{font-size:16px;font-weight:800;letter-spacing:.02em;word-break:break-all;line-height:1.25}' +
-'.sid{font-family:"SF Mono",Consolas,monospace;font-size:10.5px;color:#666;' +
-  'margin-top:4px;word-break:break-all}' +
-'.qr-img{cursor:zoom-in;border-radius:4px;transition:transform .15s ease,box-shadow .15s ease}' +
-'.qr-img:hover{transform:scale(1.025);box-shadow:0 4px 14px rgba(0,0,0,.14)}' +
-'.viewer{position:fixed;inset:0;z-index:999999;background:rgba(0,0,0,.82);' +
-  'display:none;align-items:center;justify-content:center;padding:24px}' +
+'html,body{min-height:100%}' +
+'body{margin:0;background:var(--soft);color:var(--ink);font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif}' +
+'.shell{max-width:1500px;margin:0 auto;padding:20px 24px 42px}' +
+'.topbar{position:sticky;top:0;z-index:20;margin:-20px -24px 20px;padding:17px 24px 15px;background:rgba(246,247,249,.96);backdrop-filter:blur(12px);border-bottom:1px solid rgba(229,231,235,.92)}' +
+'.topline{display:flex;align-items:center;justify-content:space-between;gap:24px}' +
+'.brand{min-width:0}' +
+'.eyebrow{font-size:11px;font-weight:900;letter-spacing:.16em;text-transform:uppercase;color:var(--blue);margin-bottom:3px}' +
+'h1{margin:0;font-size:22px;line-height:1.15;letter-spacing:-.02em}' +
+'.meta{font-size:12px;color:var(--muted);margin-top:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
+'.actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}' +
+'button,input{font:inherit}' +
+'.action{height:42px;border:1px solid var(--line);background:#fff;color:var(--ink);border-radius:11px;padding:0 17px;font-size:13px;font-weight:850;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:7px;box-shadow:0 2px 7px rgba(15,23,42,.06)}' +
+'.action:hover{border-color:#cbd5e1;background:#f8fafc}' +
+'.action.primary{border-color:var(--blue);background:var(--blue);color:#fff}.action.primary:hover{background:var(--blue2)}' +
+'.action:focus-visible,.qr-open:focus-visible,.viewer button:focus-visible{outline:3px solid rgba(37,99,235,.28);outline-offset:2px}' +
+
+
+
+
+
+
+
+'.warn{background:#fffbeb;border:1px solid #fde68a;border-radius:12px;padding:10px 12px;font-size:13px;color:#92400e;margin-bottom:16px}' +
+'.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:16px}' +
+'.card{position:relative;border:1px solid var(--line);border-radius:var(--radius);padding:11px 11px 13px;text-align:center;background:#fff;break-inside:avoid;page-break-inside:avoid;box-shadow:0 1px 2px rgba(15,23,42,.04);transition:transform .14s ease,box-shadow .14s ease,border-color .14s ease}' +
+'.card:hover{transform:translateY(-1px);border-color:#d1d5db;box-shadow:0 8px 24px rgba(15,23,42,.07)}' +
+
+'.card-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;min-height:22px}' +
+'.card-num{font-variant-numeric:tabular-nums;font-size:10px;font-weight:900;color:#9ca3af;letter-spacing:.08em}' +
+'.card-tag{font-size:9px;font-weight:900;letter-spacing:.08em;color:var(--blue);background:#eff6ff;border-radius:999px;padding:4px 7px}' +
+'.qr-open{display:block;width:100%;border:0;background:#fff;border-radius:10px;padding:4px;cursor:zoom-in}' +
+'.qr-img{width:100%;max-width:194px;height:auto;display:block;margin:0 auto;object-fit:contain;image-rendering:auto}' +
+'.loc{font-size:15px;font-weight:900;letter-spacing:.01em;word-break:break-word;line-height:1.25;margin-top:5px}' +
+'.sid{font-family:"SFMono-Regular",Consolas,"Liberation Mono",monospace;font-size:10.5px;color:var(--muted);margin-top:5px;word-break:break-all}' +
+
+'.viewer{position:fixed;inset:0;z-index:999999;background:rgba(3,7,18,.82);display:none;align-items:center;justify-content:center;padding:18px;backdrop-filter:blur(5px)}' +
 '.viewer.open{display:flex}' +
-'.viewer-box{position:relative;width:min(88vw,320px);max-height:88vh;background:#fff;color:#111;' +
-  'border-radius:7px;padding:54px 42px 16px;text-align:center;box-shadow:0 14px 42px rgba(0,0,0,.46);' +
-  'display:flex;flex-direction:column;align-items:center;justify-content:center}' +
-'.viewer-qr{display:block;width:min(31vh,210px);height:auto;max-width:100%;' +
-  'object-fit:contain;background:#fff}' +
-'.viewer-loc{margin-top:14px;font-size:16px;font-weight:900;line-height:1.15;word-break:break-all}' +
-'.viewer-sid{margin-top:8px;width:100%;padding:8px 9px;border:1px solid #999;border-radius:3px;background:#fff;' +'font-family:"SF Mono",Consolas,monospace;font-size:10px;color:#222;word-break:break-all}' +
-'.viewer-count{margin-top:7px;font-size:10px;font-weight:700;color:#777}' +
-'.viewer-close{position:absolute;top:10px;right:10px;width:34px;height:34px;padding:0;' +
-  'border-radius:6px;background:#111;color:#fff;font-size:20px;line-height:32px}' +
-'.viewer-close:hover{background:#333}' +
-'.viewer-nav{position:absolute;top:50%;transform:translateY(-50%);width:30px;height:48px;' +
-  'padding:0;border-radius:5px;background:#111;color:#fff;font-size:23px;line-height:1}' +
+'.viewer-box{position:relative;width:min(90vw,350px);max-height:92vh;background:#fff;color:var(--ink);border-radius:16px;padding:46px 44px 16px;text-align:center;box-shadow:0 24px 80px rgba(0,0,0,.44);display:flex;flex-direction:column;align-items:center;overflow:auto}' +
+'.viewer-head{position:absolute;left:14px;top:14px;font-size:10px;font-weight:900;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}' +
+'.viewer-qr-wrap{background:#fff;border-radius:10px;padding:2px}' +
+'.viewer-qr{display:block;width:min(31vh,220px);height:auto;max-width:100%;object-fit:contain;background:#fff}' +
+'.viewer-loc{margin-top:13px;font-size:16px;font-weight:900;line-height:1.18;word-break:break-word}' +
+'.viewer-sid{margin-top:7px;width:100%;padding:8px 9px;border:1px solid #d1d5db;border-radius:8px;background:#f9fafb;font-family:"SFMono-Regular",Consolas,monospace;font-size:10.5px;color:#374151;word-break:break-all}' +
+'.viewer-actions{display:flex;margin-top:9px;width:100%}' +
+'.viewer-mini{width:100%;height:34px;border:1px solid #d1d5db;border-radius:8px;background:#fff;color:#374151;font-size:11px;font-weight:850;cursor:pointer}.viewer-mini:hover{background:#f9fafb}' +
+'.viewer-close{position:absolute;top:9px;right:9px;width:32px;height:32px;padding:0;border:0;border-radius:9px;background:#111827;color:#fff;font-size:20px;line-height:32px;cursor:pointer}' +
+'.viewer-nav{position:absolute;top:50%;transform:translateY(-50%);width:30px;height:50px;padding:0;border:0;border-radius:9px;background:#111827;color:#fff;font-size:24px;line-height:1;cursor:pointer}.viewer-nav:hover,.viewer-close:hover{background:#374151}' +
 '.viewer-prev{left:7px}.viewer-next{right:7px}' +
-'.viewer-help{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);' +
-  'color:#fff;font-size:12px;font-weight:700;opacity:.85;white-space:nowrap}' +
-'@media(max-width:560px){.viewer{padding:8px}.viewer-box{width:min(90vw,310px);padding:50px 40px 14px}.viewer-qr{width:min(29vh,195px)}.viewer-nav{width:28px;height:46px}.viewer-prev{left:6px}.viewer-next{right:6px}.viewer-loc{font-size:15px}}' +
-'@media print{' +
-  'body{padding:0}' +
-  '.no-print,.viewer{display:none !important}' +
-  'header{border-bottom:1px solid #000;margin-bottom:12px;padding-bottom:8px}' +
-  '.grid{grid-template-columns:repeat(3,1fr);gap:12px}' +
-  '.card{border:1px solid #999}' +
-  '@page{margin:12mm}' +
-'}' +
+'.viewer-help{position:absolute;left:50%;bottom:12px;transform:translateX(-50%);color:#e5e7eb;font-size:11px;font-weight:700;opacity:.9;white-space:nowrap}' +
+'.out-toast{position:fixed;left:50%;bottom:24px;z-index:1000000;transform:translate(-50%,10px);background:#111827;color:#fff;border-radius:999px;padding:9px 14px;font-size:12px;font-weight:800;opacity:0;pointer-events:none;transition:opacity .16s,transform .16s}.out-toast.show{opacity:1;transform:translate(-50%,0)}' +
+'@media(max-width:700px){.shell{padding:14px 14px 32px}.topbar{margin:-14px -14px 16px;padding:14px}.topline{align-items:center}.actions{gap:6px}.action{height:40px;padding:0 14px}.meta{max-width:72vw}.grid{grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px}}' +
+'@media(max-width:460px){h1{font-size:19px}.topline{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:10px}.actions{margin:0}.action{height:38px;padding:0 12px}.meta{max-width:100%}.grid{grid-template-columns:1fr 1fr}.card{padding:8px}.loc{font-size:13px}.sid{font-size:9px}.viewer{padding:8px}.viewer-box{width:min(92vw,340px);padding:44px 42px 14px}.viewer-qr{width:min(30vh,210px)}}' +
+'@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}' +
+
 '</style></head><body>' +
-'<header>' +
-  '<div><h1>' + esc(TARGET_PREFIX) + ' &mdash; ' + items.length + ' QR code' + (items.length === 1 ? '' : 's') + '</h1>' +
-  '<div class="meta">QR value = Scannable ID &middot; click any QR to scan it alone &middot; generated ' + esc(stamp) + '</div></div>' +
-  '<button class="no-print" onclick="window.print()">Print</button>' +
-'</header>' +
-warn +
-'<div class="grid">' + cards + '</div>' +
+'<main class="shell" data-p1hqr-workspace-root="1">' +
+  '<section class="topbar no-print">' +
+    '<div class="topline">' +
+      '<div class="brand"><div class="eyebrow">COMO QR WORKSPACE</div>' +
+        '<h1>' + esc(TARGET_PREFIX) + ' <span style="font-weight:500;color:#9ca3af">/</span> ' + countLabel + '</h1>' +
+        '<div class="meta">Scannable ID is the QR value &middot; generated ' + esc(stamp) + '</div></div>' +
+      '<div class="actions">' +
+        '<button id="scan-first" class="action primary" type="button">&#9635; Scan mode</button>' +
+      '</div>' +
+    '</div>' +
+  '</section>' +
+  warn +
+  '<div id="qr-grid" class="grid">' + cards + '</div>' +
+
+'</main>' +
 '<div id="qr-viewer" class="viewer no-print" aria-hidden="true">' +
-  '<div class="viewer-box" role="dialog" aria-modal="true" aria-label="Single QR code viewer">' +
-    '<button id="viewer-close" class="viewer-close" type="button" title="Close">&times;</button>' +
-    '<button id="viewer-prev" class="viewer-nav viewer-prev" type="button" title="Previous QR">&#8249;</button>' +
-    '<img id="viewer-qr" class="viewer-qr" alt="Selected QR code">' +
+  '<div class="viewer-box" role="dialog" aria-modal="true" aria-labelledby="viewer-loc" aria-describedby="viewer-sid">' +
+    '<div id="viewer-head" class="viewer-head">SCAN 1 / ' + rendered + '</div>' +
+    '<button id="viewer-close" class="viewer-close" type="button" aria-label="Close scan mode">&times;</button>' +
+    '<button id="viewer-prev" class="viewer-nav viewer-prev" type="button" aria-label="Previous QR">&#8249;</button>' +
+    '<div class="viewer-qr-wrap"><img id="viewer-qr" class="viewer-qr" alt="Selected QR code"></div>' +
     '<div id="viewer-loc" class="viewer-loc"></div>' +
     '<div id="viewer-sid" class="viewer-sid"></div>' +
-    '<div id="viewer-count" class="viewer-count"></div>' +
-    '<button id="viewer-next" class="viewer-nav viewer-next" type="button" title="Next QR">&#8250;</button>' +
+    '<div class="viewer-actions"><button id="copy-id" class="viewer-mini" type="button">Copy Scannable ID</button></div>' +
+    '<button id="viewer-next" class="viewer-nav viewer-next" type="button" aria-label="Next QR">&#8250;</button>' +
   '</div>' +
-  '<div class="viewer-help">Left / Right arrows = next QR &nbsp;&middot;&nbsp; Esc = close</div>' +
+  '<div class="viewer-help">&#8592; &#8594; navigate &nbsp;&middot;&nbsp; Home / End jump &nbsp;&middot;&nbsp; Esc closes</div>' +
 '</div>' +
+'<div id="out-toast" class="out-toast" role="status" aria-live="polite"></div>' +
 '<script>' +
 '(function(){' +
-  'var cards=Array.prototype.slice.call(document.querySelectorAll(".card"));' +
+  'var allCards=Array.prototype.slice.call(document.querySelectorAll(".card"));' +
+  'var visibleCards=allCards.slice();' +
   'var viewer=document.getElementById("qr-viewer");' +
   'var box=viewer.querySelector(".viewer-box");' +
   'var qr=document.getElementById("viewer-qr");' +
   'var loc=document.getElementById("viewer-loc");' +
   'var sid=document.getElementById("viewer-sid");' +
-  'var count=document.getElementById("viewer-count");' +
-  'var current=0;' +
-  'function show(i){' +
-    'if(!cards.length)return;' +
-    'current=(i+cards.length)%cards.length;' +
-    'var card=cards[current];' +
-    'var img=card.querySelector(".qr-img");' +
-    'qr.src=img.src;' +
-    'qr.alt=img.alt;' +
-    'loc.textContent=card.querySelector(".loc").textContent;' +
-    'sid.textContent=card.querySelector(".sid").textContent;' +
-    'count.textContent=(current+1)+" / "+cards.length;' +
-  '}' +
-  'function openAt(i){show(i);viewer.classList.add("open");viewer.setAttribute("aria-hidden","false");document.body.style.overflow="hidden";document.getElementById("viewer-close").focus();}' +
-  'function closeViewer(){viewer.classList.remove("open");viewer.setAttribute("aria-hidden","true");document.body.style.overflow="";}' +
-  'cards.forEach(function(card,i){var img=card.querySelector(".qr-img");img.addEventListener("click",function(){openAt(i);});});' +
+  'var head=document.getElementById("viewer-head");' +
+
+
+
+  'var current=0,lastFocus=null,toastTimer=null;' +
+  'function outToast(msg){var t=document.getElementById("out-toast");t.textContent=msg;t.classList.add("show");clearTimeout(toastTimer);toastTimer=setTimeout(function(){t.classList.remove("show");},1800);}' +
+
+
+  'function show(i){if(!visibleCards.length)return;current=(i+visibleCards.length)%visibleCards.length;var card=visibleCards[current];var img=card.querySelector(".qr-img");qr.src=img.src;qr.alt=img.alt;loc.textContent=card.querySelector(".loc").textContent;sid.textContent=card.querySelector(".sid").textContent;head.textContent="SCAN "+(current+1)+" / "+visibleCards.length;}' +
+  'function openAt(i,origin){if(!visibleCards.length){outToast("No QR codes available");return;}lastFocus=origin||document.activeElement;show(i);viewer.classList.add("open");viewer.setAttribute("aria-hidden","false");document.body.style.overflow="hidden";document.getElementById("viewer-close").focus();}' +
+  'function closeViewer(){viewer.classList.remove("open");viewer.setAttribute("aria-hidden","true");document.body.style.overflow="";if(lastFocus&&lastFocus.focus)try{lastFocus.focus();}catch(e){}}' +
+  'function copyText(text){if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(text).then(function(){outToast("Scannable ID copied");},fallback);}else fallback();function fallback(){try{var ta=document.createElement("textarea");ta.value=text;ta.style.position="fixed";ta.style.opacity="0";document.body.appendChild(ta);ta.select();document.execCommand("copy");ta.remove();outToast("Scannable ID copied");}catch(e){outToast("Copy failed");}}}' +
+  'allCards.forEach(function(card){card.querySelector(".qr-open").addEventListener("click",function(){openAt(visibleCards.indexOf(card),this);});});' +
   'document.getElementById("viewer-prev").addEventListener("click",function(){show(current-1);});' +
   'document.getElementById("viewer-next").addEventListener("click",function(){show(current+1);});' +
   'document.getElementById("viewer-close").addEventListener("click",closeViewer);' +
+  'document.getElementById("scan-first").addEventListener("click",function(){openAt(0,this);});' +
+
+
+  'document.getElementById("copy-id").addEventListener("click",function(){copyText(sid.textContent);});' +
+
+
   'viewer.addEventListener("click",function(e){if(e.target===viewer)closeViewer();});' +
   'box.addEventListener("click",function(e){e.stopPropagation();});' +
   'document.addEventListener("keydown",function(e){' +
     'if(!viewer.classList.contains("open"))return;' +
     'if(e.key==="ArrowLeft"){e.preventDefault();show(current-1);}' +
     'else if(e.key==="ArrowRight"){e.preventDefault();show(current+1);}' +
+    'else if(e.key==="Home"){e.preventDefault();show(0);}' +
+    'else if(e.key==="End"){e.preventDefault();show(visibleCards.length-1);}' +
     'else if(e.key==="Escape"){e.preventDefault();closeViewer();}' +
+    'else if(e.key==="Tab"){' +
+      'var f=Array.prototype.slice.call(box.querySelectorAll("button:not([disabled])"));if(!f.length)return;var first=f[0],last=f[f.length-1];if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}' +
+    '}' +
   '});' +
-  'if(cards.length){setTimeout(function(){openAt(0);},0);}' +
+
+  'if(visibleCards.length){setTimeout(function(){openAt(0,document.getElementById("scan-first"));},0);}' +
 '})();' +
 '<\/script>' +
 '</body></html>'
   );
 }
 
+function buildLoadingHTML() {
+  return '<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
+    '<title>Building ' + esc(TARGET_PREFIX) + ' QR Codes…</title><style>' +
+    '*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f6f7f9;color:#111827;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif}' +
+    '.box{width:min(88vw,420px);background:#fff;border:1px solid #e5e7eb;border-radius:22px;padding:28px;text-align:center;box-shadow:0 18px 60px rgba(15,23,42,.10)}' +
+    '.mark{width:52px;height:52px;border-radius:18px;background:#2563eb;color:#fff;display:grid;place-items:center;margin:0 auto 14px;font-size:25px;font-weight:900}.title{font-size:18px;font-weight:900}.sub{margin-top:7px;font-size:13px;color:#6b7280}.bar{height:4px;background:#e5e7eb;border-radius:999px;overflow:hidden;margin-top:20px}.bar:after{content:"";display:block;width:42%;height:100%;background:#2563eb;border-radius:inherit;animation:m 1s ease-in-out infinite alternate}@keyframes m{from{transform:translateX(-10%)}to{transform:translateX(160%)}}@media(prefers-reduced-motion:reduce){.bar:after{animation:none;width:100%}}' +
+    '</style></head><body><div class="box"><div class="mark">QR</div><div class="title">Building ' + esc(TARGET_PREFIX) + ' QR codes</div><div class="sub">Waiting for the cart table and collecting Scannable IDs…</div><div class="bar"></div></div></body></html>';
+}
+
 /* Write HTML to a tab; returns true on success, false if the write was blocked. */
 function writeToTab(win, html) {
+  if (!win || win.closed) return false;
   try {
     win.document.open();
     win.document.write(html);
     win.document.close();
-    /* Verify something actually landed — a blocked/sandboxed write leaves
-       the document empty or in a default state. */
     return !!(win.document.body && win.document.body.innerHTML.length > 100);
   } catch (e) {
     return false;
@@ -632,15 +704,16 @@ function writeToTab(win, html) {
 
 function openQRTab(items, win) {
   var html = buildTabHTML(items);
-  if (writeToTab(win, html)) return true;
+  if (writeToTab(win, html)) {
+    try { win.opener = null; } catch (e0) {}
+    return true;
+  }
 
-  /* Write failed (some browsers block document.write on cross-origin blobs).
-     Fall back to a Blob URL — no cross-origin restriction. */
   try {
     var blob = new Blob([html], { type: 'text/html' });
     var url  = URL.createObjectURL(blob);
-    win.location.href = url;
-    /* Revoke after a generous delay so the page finishes loading. */
+    try { win.opener = null; } catch (e1) {}
+    win.location.replace(url);
     setTimeout(function () { try { URL.revokeObjectURL(url); } catch (e2) {} }, 60000);
     return true;
   } catch (e) {
@@ -650,226 +723,348 @@ function openQRTab(items, win) {
 
 
 /* ══════════════════════════════════════════════════════════
-   UI — button + toast
+   DASHBOARD UI — compact launcher + count + toast
 ══════════════════════════════════════════════════════════ */
 var style = document.createElement('style');
 style.textContent =
-  '#p1hqr-btn{position:fixed;bottom:24px;left:24px;z-index:99999;background:#0d6efd;color:#fff;' +
-    'border:none;border-radius:60px;padding:24px 46px;font-size:28px;font-weight:800;' +
-    'letter-spacing:.02em;line-height:1.1;' +
-    'font-family:"Segoe UI",system-ui,sans-serif;box-shadow:0 6px 20px rgba(13,110,253,.45);' +
-    'cursor:pointer;transition:transform .2s,box-shadow .2s;user-select:none;display:none}' +
-  '#p1hqr-btn:hover{transform:scale(1.04);box-shadow:0 9px 26px rgba(13,110,253,.55)}' +
-  '#p1hqr-btn:active{transform:scale(.98)}' +
-  '#p1hqr-btn.visible{display:block}' +
-  '#p1hqr-btn.busy{background:#6c757d;box-shadow:0 4px 14px rgba(108,117,125,.42)}' +
-  '#p1hqr-toast{position:fixed;bottom:130px;left:24px;z-index:99999;max-width:400px;' +
-    'background:#111;color:#fff;font:14px/1.45 "Segoe UI",system-ui,sans-serif;' +
-    'padding:13px 17px;border-radius:10px;box-shadow:0 6px 22px rgba(0,0,0,.3);' +
-    'opacity:0;transform:translateY(6px);transition:opacity .2s,transform .2s;pointer-events:none}' +
+  '#p1hqr-btn{position:fixed;bottom:20px;left:20px;z-index:99999;height:86px;min-width:320px;' +
+    'display:none;align-items:center;gap:16px;padding:0 20px 0 16px;border:1px solid rgba(255,255,255,.15);border-radius:15px;' +
+    'background:linear-gradient(180deg,#1f2937,#111827);color:#fff;font-family:"Segoe UI",system-ui,sans-serif;' +
+    'font-size:16px;font-weight:850;letter-spacing:.01em;box-shadow:0 10px 28px rgba(15,23,42,.28);cursor:pointer;user-select:none;' +
+    'transition:transform .16s ease,box-shadow .16s ease,background .16s ease;touch-action:none}' +
+  '#p1hqr-btn.visible{display:inline-flex}' +
+  '#p1hqr-btn:hover{transform:translateY(-1px);box-shadow:0 14px 34px rgba(15,23,42,.34)}' +
+  '#p1hqr-btn:active{transform:translateY(0) scale(.985)}' +
+  '#p1hqr-btn:focus-visible{outline:3px solid rgba(37,99,235,.35);outline-offset:3px}' +
+  '#p1hqr-btn.busy{background:linear-gradient(180deg,#4b5563,#374151);cursor:wait}' +
+  '#p1hqr-btn .p1h-icon{width:58px;height:58px;border-radius:16px;display:grid;place-items:center;background:#2563eb;color:#fff;font-size:22px;font-weight:950;flex:0 0 auto}' +
+  '#p1hqr-btn.busy .p1h-icon{background:#6b7280}' +
+  '#p1hqr-btn .p1h-copy{display:flex;flex-direction:column;align-items:flex-start;line-height:1.05;min-width:0}' +
+  '#p1hqr-btn .p1h-main{font-size:20px;font-weight:900;white-space:nowrap}' +
+  '#p1hqr-btn .p1h-sub{font-size:12px;font-weight:750;color:#cbd5e1;margin-top:5px;letter-spacing:.08em;text-transform:uppercase;white-space:nowrap}' +
+  '#p1hqr-btn .p1h-count{margin-left:auto;min-width:44px;height:44px;padding:0 11px;border-radius:999px;background:#fff;color:#111827;display:grid;place-items:center;font-size:15px;font-weight:950;font-variant-numeric:tabular-nums}' +
+  '#p1hqr-btn .p1h-count.zero{background:#374151;color:#cbd5e1}' +
+  '#p1hqr-toast{position:fixed;bottom:118px;left:20px;z-index:100000;max-width:min(420px,calc(100vw - 40px));' +
+    'background:#111827;color:#fff;font:13px/1.42 "Segoe UI",system-ui,sans-serif;padding:11px 13px;border-radius:11px;' +
+    'box-shadow:0 12px 34px rgba(0,0,0,.28);opacity:0;transform:translateY(7px);transition:opacity .16s ease,transform .16s ease;pointer-events:none}' +
   '#p1hqr-toast.show{opacity:1;transform:none}' +
-  '#p1hqr-toast.err{background:#b3261e}';
+  '#p1hqr-toast.err{background:#991b1b}' +
+  '@media(max-width:620px){#p1hqr-btn{bottom:12px;left:12px;height:72px;min-width:260px;border-radius:20px}#p1hqr-btn .p1h-icon{width:48px;height:48px}#p1hqr-toast{left:12px;bottom:98px;max-width:calc(100vw - 24px)}}' +
+  '@media(prefers-reduced-motion:reduce){#p1hqr-btn,#p1hqr-toast{transition:none!important}}';
 document.head.appendChild(style);
 
 var btn = document.createElement('button');
 btn.id = 'p1hqr-btn';
-btn.textContent = '\u2318 QR: ' + TARGET_PREFIX;
-btn.title = 'Generate QR codes from Scannable IDs of rows in ' + TARGET_PREFIX;
+btn.type = 'button';
+btn.innerHTML =
+  '<span class="p1h-icon" aria-hidden="true">QR</span>' +
+  '<span class="p1h-copy"><span class="p1h-main">' + TARGET_PREFIX + ' QR Codes</span>' +
+    '<span class="p1h-sub">Scannable ID</span></span>' +
+  '<span id="p1hqr-count" class="p1h-count zero" aria-label="0 QR codes">0</span>';
+btn.title = 'Generate QR codes from Scannable IDs of ' + TARGET_PREFIX + ' rows';
 document.body.appendChild(btn);
+
+var countEl = btn.querySelector('#p1hqr-count');
+var mainLabelEl = btn.querySelector('.p1h-main');
+var subLabelEl = btn.querySelector('.p1h-sub');
 
 var toastEl = document.createElement('div');
 toastEl.id = 'p1hqr-toast';
+toastEl.setAttribute('role', 'status');
+toastEl.setAttribute('aria-live', 'polite');
 document.body.appendChild(toastEl);
 
 var toastTimer = null;
 function toast(msg, isErr) {
   toastEl.textContent = msg;
+  toastEl.setAttribute('role', isErr ? 'alert' : 'status');
   toastEl.className = 'show' + (isErr ? ' err' : '');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(function () { toastEl.className = ''; }, isErr ? 7000 : 3500);
+  toastTimer = setTimeout(function () { toastEl.className = ''; }, isErr ? 6500 : 3000);
 }
 
-/* draggable, without swallowing the click */
-var dragging = false, offX = 0, offY = 0;
-btn.addEventListener('mousedown', function (e) {
-  dragging = false;
+function updateLauncherCount(count) {
+  count = Math.max(0, Number(count) || 0);
+  countEl.textContent = String(count);
+  countEl.setAttribute('aria-label', count + ' QR code' + (count === 1 ? '' : 's'));
+  countEl.classList.toggle('zero', count === 0);
+  btn.title = count
+    ? 'Open ' + count + ' ' + TARGET_PREFIX + ' QR code' + (count === 1 ? '' : 's')
+    : 'Generate QR codes from Scannable IDs of ' + TARGET_PREFIX + ' rows';
+}
+
+function setBusy(v) {
+  btn.classList.toggle('busy', !!v);
+  btn.setAttribute('aria-busy', v ? 'true' : 'false');
+  if (v) {
+    mainLabelEl.textContent = 'Building QR Codes';
+    subLabelEl.textContent = 'Please wait';
+  } else {
+    mainLabelEl.textContent = TARGET_PREFIX + ' QR Codes';
+    subLabelEl.textContent = 'Scannable ID';
+  }
+}
+
+/* Draggable launcher using pointer events. Position is remembered. */
+var POS_KEY = 'P1H_QR_BUTTON_POS_V2';
+var drag = null, suppressClick = false;
+
+function clampLauncher(left, top) {
   var r = btn.getBoundingClientRect();
-  offX = e.clientX - r.left; offY = e.clientY - r.top;
-  function move(ev) {
-    dragging = true;
-    btn.style.left = (ev.clientX - offX) + 'px';
-    btn.style.top  = (ev.clientY - offY) + 'px';
-    btn.style.bottom = 'auto'; btn.style.right = 'auto';
-  }
-  function up() {
-    document.removeEventListener('mousemove', move);
-    document.removeEventListener('mouseup', up);
-  }
-  document.addEventListener('mousemove', move);
-  document.addEventListener('mouseup', up);
+  var w = r.width || 188, h = r.height || 52;
+  var maxLeft = Math.max(8, window.innerWidth - w - 8);
+  var maxTop  = Math.max(8, window.innerHeight - h - 8);
+  return {
+    left: Math.min(maxLeft, Math.max(8, left)),
+    top: Math.min(maxTop, Math.max(8, top))
+  };
+}
+
+function saveLauncherPosition() {
+  try {
+    var r = btn.getBoundingClientRect();
+    localStorage.setItem(POS_KEY, JSON.stringify({ left: Math.round(r.left), top: Math.round(r.top) }));
+  } catch (e) {}
+}
+
+function restoreLauncherPosition() {
+  try {
+    var raw = localStorage.getItem(POS_KEY);
+    if (!raw) return;
+    var p = JSON.parse(raw);
+    if (!p || !isFinite(p.left) || !isFinite(p.top)) return;
+    var clamped = clampLauncher(p.left, p.top);
+    btn.style.left = clamped.left + 'px';
+    btn.style.top = clamped.top + 'px';
+    btn.style.bottom = 'auto';
+    btn.style.right = 'auto';
+  } catch (e) {}
+}
+
+btn.addEventListener('pointerdown', function (e) {
+  if (e.button !== undefined && e.button !== 0) return;
+  var r = btn.getBoundingClientRect();
+  drag = {
+    id: e.pointerId,
+    startX: e.clientX,
+    startY: e.clientY,
+    offX: e.clientX - r.left,
+    offY: e.clientY - r.top,
+    moved: false
+  };
+  try { btn.setPointerCapture(e.pointerId); } catch (e0) {}
 });
 
-/* Maximum automatic retries if the new tab comes up blank. */
-var MAX_RETRIES = 3, RETRY_MS = 900;
+btn.addEventListener('pointermove', function (e) {
+  if (!drag || e.pointerId !== drag.id) return;
+  var dx = e.clientX - drag.startX, dy = e.clientY - drag.startY;
+  if (!drag.moved && Math.sqrt(dx * dx + dy * dy) < 5) return;
+  drag.moved = true;
+  var p = clampLauncher(e.clientX - drag.offX, e.clientY - drag.offY);
+  btn.style.left = p.left + 'px';
+  btn.style.top  = p.top + 'px';
+  btn.style.bottom = 'auto';
+  btn.style.right = 'auto';
+  e.preventDefault();
+});
 
-/* Every QR-generation click gets its own session id. Navigating away
-   invalidates that id, so delayed retries/errors from the previous cart
-   cannot appear later on the main dashboard. */
+function finishDrag(e) {
+  if (!drag || (e && e.pointerId !== undefined && e.pointerId !== drag.id)) return;
+  suppressClick = !!drag.moved;
+  if (drag.moved) saveLauncherPosition();
+  try { btn.releasePointerCapture(drag.id); } catch (e0) {}
+  drag = null;
+}
+btn.addEventListener('pointerup', finishDrag);
+btn.addEventListener('pointercancel', finishDrag);
+
+window.addEventListener('resize', function () {
+  if (!btnVisible || !btn.style.top) return;
+  var r = btn.getBoundingClientRect();
+  var p = clampLauncher(r.left, r.top);
+  btn.style.left = p.left + 'px';
+  btn.style.top = p.top + 'px';
+});
+
+/* Maximum automatic retries while Angular finishes rendering the table. */
+var MAX_RETRIES = 5, RETRY_MS = 500;
 var generationSession = 0;
+var generationTimer = null;
+var pendingWindow = null;
 
 function generationStillCurrent(sessionId) {
   return sessionId === generationSession;
 }
 
-function doGenerate(attempt, sessionId) {
-  if (attempt === undefined) attempt = 0;
-  if (sessionId === undefined) sessionId = generationSession;
-  if (!generationStillCurrent(sessionId)) return;
-
-  var res = scrapeRows();
-
-  if (!generationStillCurrent(sessionId)) return;
-
-  if (res.error) {
-    if (!generationStillCurrent(sessionId)) return;
-    toast(res.error, true); resetBtn(); return;
-  }
-  if (!res.items.length) {
-    /* Table may not have loaded yet — retry silently a few times
-       before giving up with a message. */
-    if (attempt < MAX_RETRIES) {
-      setTimeout(function () {
-        if (generationStillCurrent(sessionId)) doGenerate(attempt + 1, sessionId);
-      }, RETRY_MS);
-      return;
-    }
-    if (!generationStillCurrent(sessionId)) return;
-    toast('No ' + TARGET_PREFIX + ' rows found after ' + (attempt + 1) + ' attempts ' +
-          '(scanned ' + res.total + ' row' + (res.total === 1 ? '' : 's') + ').', true);
-    resetBtn();
-    return;
-  }
-
-  /* Open the tab synchronously (inside a user gesture) to beat popup blockers.
-     If it fails, wait and try once more — some browsers allow it on retry. */
-  var win = window.open('', '_blank');
-  if (!win) {
-    if (attempt < 1) {
-      if (!generationStillCurrent(sessionId)) return;
-      toast('Opening tab — if nothing appears, click again.', false);
-      setTimeout(function () {
-        if (generationStillCurrent(sessionId)) doGenerate(attempt + 1, sessionId);
-      }, 800);
-      return;
-    }
-    if (!generationStillCurrent(sessionId)) return;
-    toast('Popup blocked — allow popups for this site in the address bar, then click again.', true);
-    resetBtn();
-    return;
-  }
-
-  setTimeout(function () {
-    if (!generationStillCurrent(sessionId)) {
-      try { win.close(); } catch (e0) {}
-      return;
-    }
-    var ok = false;
-    try {
-      ok = openQRTab(res.items, win);
-    } catch (e) {
-      ok = false;
-    }
-
-    if (ok) {
-      if (!generationStillCurrent(sessionId)) return;
-      toast(res.items.length + ' QR code' + (res.items.length === 1 ? '' : 's') +
-            ' opened in a new tab.', false);
-      resetBtn();
-      return;
-    }
-
-    /* Tab opened but write failed — close it, wait, retry. */
-    try { win.close(); } catch (e2) {}
-
-    if (!generationStillCurrent(sessionId)) return;
-    if (attempt < MAX_RETRIES) {
-      toast('Tab loaded blank — retrying (' + (attempt + 1) + '/' + MAX_RETRIES + ')\u2026', false);
-      setTimeout(function () {
-        if (generationStillCurrent(sessionId)) doGenerate(attempt + 1, sessionId);
-      }, RETRY_MS);
-    } else {
-      toast('Could not write to the new tab after ' + (attempt + 1) + ' tries. ' +
-            'Try disabling any extensions that block scripts on new tabs.', true);
-      resetBtn();
-    }
-  }, 0);
+function closePendingWindow() {
+  if (!pendingWindow) return;
+  try { if (!pendingWindow.closed) pendingWindow.close(); } catch (e) {}
+  pendingWindow = null;
 }
 
 function resetBtn() {
-  btn.classList.remove('busy');
-  btn.textContent = '\u2318 QR: ' + TARGET_PREFIX;
+  setBusy(false);
+}
+
+function finishGeneration(sessionId, success) {
+  if (!generationStillCurrent(sessionId)) return;
+  clearTimeout(generationTimer);
+  generationTimer = null;
+  if (success) pendingWindow = null;
+  resetBtn();
+  scheduleCountRefresh(0);
+}
+
+function failGeneration(sessionId, message) {
+  if (!generationStillCurrent(sessionId)) return;
+  closePendingWindow();
+  toast(message, true);
+  finishGeneration(sessionId, false);
+}
+
+function doGenerate(attempt, sessionId, win) {
+  if (!generationStillCurrent(sessionId)) return;
+  if (!win || win.closed) {
+    pendingWindow = null;
+    toast('QR window was closed before generation finished.', true);
+    finishGeneration(sessionId, false);
+    return;
+  }
+
+  var res = scrapeRows();
+  if (!generationStillCurrent(sessionId)) return;
+
+  if ((res.error || !res.items.length) && attempt < MAX_RETRIES) {
+    generationTimer = setTimeout(function () {
+      if (generationStillCurrent(sessionId)) doGenerate(attempt + 1, sessionId, win);
+    }, RETRY_MS);
+    return;
+  }
+
+  if (res.error) {
+    failGeneration(sessionId, 'Could not find the item table on this cart. Open the cart details fully, then try again.');
+    return;
+  }
+
+  if (!res.items.length) {
+    failGeneration(sessionId,
+      'No ' + TARGET_PREFIX + ' rows found (scanned ' + res.total + ' row' + (res.total === 1 ? '' : 's') + ').');
+    return;
+  }
+
+  var ok = false;
+  try { ok = openQRTab(res.items, win); } catch (e) { ok = false; }
+
+  if (!ok) {
+    failGeneration(sessionId, 'The QR tab opened, but its content could not be written. Try again or disable extensions that block new-tab scripts.');
+    return;
+  }
+
+  toast(res.items.length + ' QR code' + (res.items.length === 1 ? '' : 's') + ' ready.', false);
+  finishGeneration(sessionId, true);
+}
+
+function startGeneration() {
+  generationSession++;
+  var sessionId = generationSession;
+  clearTimeout(generationTimer);
+  generationTimer = null;
+  closePendingWindow();
+
+  /* Open immediately inside the click gesture. This is the reliable way to
+     avoid popup blockers even when the Angular table needs a retry. */
+  var win = window.open('', '_blank');
+  if (!win) {
+    toast('Popup blocked — allow popups for this site, then click the QR button again.', true);
+    resetBtn();
+    return;
+  }
+
+  pendingWindow = win;
+  setBusy(true);
+  writeToTab(win, buildLoadingHTML());
+  doGenerate(0, sessionId, win);
 }
 
 btn.addEventListener('click', function () {
-  if (dragging) { dragging = false; return; }
-  generationSession++;
-  var thisSession = generationSession;
-  btn.classList.add('busy');
-  btn.textContent = '\u23F3 building\u2026';
-  doGenerate(0, thisSession);
+  if (suppressClick) { suppressClick = false; return; }
+  if (btn.classList.contains('busy')) return;
+  startGeneration();
 });
 
-/* ══════════════════════════════════════════════════════════
-   VISIBILITY — button shows only on a cart/task detail page.
 
-   Hiding is eager (instant), showing is conservative. The
-   dashboard mutates constantly, so this uses a leading-edge
-   throttle rather than a debounce: a debounce would keep
-   getting reset by the stream of mutations and the button
-   could linger after navigating away.
+/* ══════════════════════════════════════════════════════════
+   VISIBILITY + SPA LIFECYCLE
 ══════════════════════════════════════════════════════════ */
 var btnVisible = false;
 function setVisible(v) {
   if (v === btnVisible) return;
   btnVisible = v;
-  if (v) btn.classList.add('visible');
-  else   btn.classList.remove('visible');
+  btn.classList.toggle('visible', v);
+  if (v) {
+    restoreLauncherPosition();
+    scheduleCountRefresh(0);
+  }
 }
 
-/* Cheap checks — safe to run on every signal.
-   true = definitely detail page, false = not obviously one. */
+function isGeneratedWorkspace() {
+  var root = document.documentElement;
+  if (root && root.getAttribute('data-p1hqr-workspace') === '1') return true;
+  if (document.querySelector('[data-p1hqr-workspace-root="1"]')) return true;
+  return false;
+}
+
 function cheapDetail() {
   if (/\/task\/|jobdetails/i.test(location.href)) return true;
   if (document.querySelector('div.job-details')) return true;
   return false;
 }
 
-/* Expensive fallback for non-standard markup — throttled + cached. */
 var tblAt = 0, tblRes = false;
 function tableDetail() {
   var now = Date.now();
-  if (now - tblAt > 600) { tblAt = now; tblRes = !!findTable(); }
+  if (now - tblAt > 700) {
+    tblAt = now;
+    tblRes = !!findTable();
+  }
   return tblRes;
 }
 
 function updateVisibility() {
+  /* The generated QR workspace can retain the original /jobdetails URL in
+     some browsers. The workspace marker must win over URL-based detection so
+     the dashboard launcher never appears inside the QR workspace itself. */
+  if (isGeneratedWorkspace()) { setVisible(false); return; }
   if (cheapDetail()) { setVisible(true); return; }
   setVisible(tableDetail());
 }
 
-/* On navigation: hide instantly, drop the cache, then re-evaluate. */
+var countRefreshTimer = null;
+function scheduleCountRefresh(delay) {
+  clearTimeout(countRefreshTimer);
+  countRefreshTimer = setTimeout(function () {
+    countRefreshTimer = null;
+    if (!btnVisible || document.hidden || isGeneratedWorkspace()) return;
+    var res = scrapeRows();
+    updateLauncherCount(res.error ? 0 : res.items.length);
+  }, delay === undefined ? 220 : delay);
+}
+
 function onNavigate() {
-  generationSession++;             /* cancel retries/errors from the page we just left */
+  generationSession++;
+  clearTimeout(generationTimer);
+  generationTimer = null;
+  closePendingWindow();
+  setBusy(false);
   setVisible(false);
-  tblAt = 0; tblRes = false;
+  updateLauncherCount(0);
+  tblAt = 0;
+  tblRes = false;
   clearTimeout(toastTimer);
-  toastEl.className = '';          /* don't leave a stale message behind */
-  resetBtn();
+  toastEl.className = '';
   updateVisibility();
 }
 
-/* AngularJS routes via pushState, which does NOT fire popstate —
-   patch both history methods so SPA navigation is caught immediately. */
 (function () {
   var _push = history.pushState, _replace = history.replaceState;
   history.pushState = function () {
@@ -887,24 +1082,39 @@ function onNavigate() {
 window.addEventListener('popstate', onNavigate);
 window.addEventListener('hashchange', onNavigate);
 
-/* Safety net: catch any URL change the patch above misses. */
+document.addEventListener('visibilitychange', function () {
+  if (!document.hidden) {
+    updateVisibility();
+    scheduleCountRefresh(40);
+  }
+});
+
+/* Low-frequency URL safety net. The history patches catch normal Angular
+   navigation immediately; this catches unusual route changes without a 120ms loop. */
 var lastHref = location.href;
 setInterval(function () {
-  if (location.href !== lastHref) { lastHref = location.href; onNavigate(); }
-}, 120);
+  if (location.href !== lastHref) {
+    lastHref = location.href;
+    onNavigate();
+  }
+}, 700);
 
-/* Leading-edge throttle — always fires, at most every 150ms.
-   Catches in-place removal of the detail view (no URL change). */
-var mutAt = 0;
+/* One observer, work coalesced through a timer instead of rescanning the
+   entire document for every mutation burst. */
+var domRefreshTimer = null;
 new MutationObserver(function () {
-  var now = Date.now();
-  if (now - mutAt < 150) return;
-  mutAt = now;
-  updateVisibility();
+  if (domRefreshTimer) return;
+  domRefreshTimer = setTimeout(function () {
+    domRefreshTimer = null;
+    updateVisibility();
+    scheduleCountRefresh(0);
+  }, 240);
 }).observe(document.body, { childList: true, subtree: true });
 
 updateVisibility();
+restoreLauncherPosition();
+scheduleCountRefresh(40);
 
-console.log('[P1H-QR] v1.3.6 loaded — QR value = Scannable ID, prefix filter = ' + TARGET_PREFIX);
+console.log('[P1H-QR] v1.4.3 loaded — streamlined QR workspace, scan mode only, no workspace launcher/search/print, QR value = Scannable ID');
 
 })();
