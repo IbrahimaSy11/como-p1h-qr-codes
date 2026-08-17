@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         COMO P-1-H Scannable ID QR Codes
 // @namespace    https://github.com/uny2-ops
-// @version      1.4.8
+// @version      1.4.9
 // @description  P-1-H Scannable ID QR workspace with a fixed-size Manager Actions button that disables when no QR data exists
 // @author       Ibrahim
 // @homepageURL  https://github.com/IbrahimaSy11/como-p1h-qr-codes
@@ -748,9 +748,10 @@ style.textContent =
   '#p1hqr-btn .p1h-copy{display:flex;align-items:center;min-width:0;overflow:hidden;line-height:1}' +
   '#p1hqr-btn .p1h-main{font-size:10px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:clip}' +
   '#p1hqr-btn .p1h-sub{display:none!important}' +
-  '#p1hqr-btn .p1h-count{flex:0 0 auto;min-width:14px;height:14px;padding:0 3px;border-radius:8px;background:#fff;color:currentColor;' +
-    'display:grid;place-items:center;font-size:9px;font-weight:800;font-variant-numeric:tabular-nums}' +
-  '#p1hqr-btn .p1h-count.zero{background:rgba(255,255,255,.2);color:#fff}' +
+  '#p1hqr-btn .p1h-count{flex:0 0 auto;min-width:0;height:auto;padding:0;margin-left:5px;border:0!important;border-radius:0!important;' +
+    'background:transparent!important;color:inherit!important;display:inline-block;font-size:11px;font-weight:800;' +
+    'line-height:1;font-variant-numeric:tabular-nums;box-shadow:none!important}' +
+  '#p1hqr-btn .p1h-count.zero{background:transparent!important;color:inherit!important}' +
   /* Bootstrap 3 btn-group removes the inside corner between adjacent buttons.
      Match that behavior even though this button is injected after Angular. */
   '.btn-group>#p1hqr-btn:not(:first-child){margin-left:-1px!important}' +
@@ -1274,6 +1275,6 @@ if (findCompleteTaskButton()) {
   scheduleCountRefresh(0);
 }
 
-console.log('[P1H-QR] v1.4.8 loaded — stable no-flicker mount; matches Complete Task color/size; QR value = Scannable ID');
+console.log('[P1H-QR] v1.4.9 loaded — plain number count; stable no-flicker mount; matches Complete Task color/size; QR value = Scannable ID');
 
 })();
