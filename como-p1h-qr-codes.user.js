@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         COMO P-1-H Scannable ID QR Codes
 // @namespace    https://github.com/uny2-ops
-// @version      1.4.6
+// @version      1.4.7
 // @description  P-1-H Scannable ID QR workspace with a fixed-size Manager Actions button that disables when no QR data exists
 // @author       Ibrahim
 // @homepageURL  https://github.com/IbrahimaSy11/como-p1h-qr-codes
@@ -14,6 +14,7 @@
 // @match        https://como-operations-dashboard-iad.iad.proxy.amazon.com/store/*/tasks*
 // @match        https://como-operations-dashboard-iad.iad.proxy.amazon.com/store/*/jobs*
 // @grant        none
+// @run-at       document-end
 // ==/UserScript==
 
 (function () {
@@ -1141,10 +1142,26 @@ setInterval(function () {
   }
 }, 700);
 
-/* One observer, work coalesced through a timer instead of rescanning the
-   entire document for every mutation burst. */
+/* One observer. The launcher itself mounts immediately the moment Angular
+   inserts Complete Task. All heavier count/table work stays coalesced so this
+   does not turn into a high-frequency page scan. */
 var domRefreshTimer = null;
-new MutationObserver(function () {
+new MutationObserver(function (mutations) {
+  /* Fast path: if Complete Task now exists, mount/show immediately.
+     This is only a tiny selector lookup and avoids the old 240ms visual delay. */
+  if (!btnVisible && !isGeneratedWorkspace()) {
+    var completeNow = findCompleteTaskButton();
+    if (completeNow) {
+      setVisible(true);
+      scheduleCountRefresh(0);
+    }
+  } else if (btnVisible) {
+    /* Angular may rebuild the same btn-group. Re-assert placement immediately
+       without waiting for the slower general refresh. */
+    mountLauncherInline();
+  }
+
+  /* Slow/coalesced path for table/count/route state. */
   if (domRefreshTimer) return;
   domRefreshTimer = setTimeout(function () {
     domRefreshTimer = null;
@@ -1153,10 +1170,17 @@ new MutationObserver(function () {
   }, 240);
 }).observe(document.body, { childList: true, subtree: true });
 
-updateVisibility();
-mountLauncherInline();
-scheduleCountRefresh(40);
+/* Initial fast mount. On an already-rendered details page this puts the
+   P-1-H button beside Complete Task immediately. */
+if (findCompleteTaskButton()) {
+  setVisible(true);
+  scheduleCountRefresh(0);
+} else {
+  updateVisibility();
+  mountLauncherInline();
+  scheduleCountRefresh(0);
+}
 
-console.log('[P1H-QR] v1.4.6 loaded — same size as Complete Task; disabled/grey at zero; QR value = Scannable ID');
+console.log('[P1H-QR] v1.4.7 loaded — instant Manager Actions mount; same size as Complete Task; disabled/grey at zero; QR value = Scannable ID');
 
 })();
