@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         COMO P-1-H Scannable ID QR Codes
 // @namespace    https://github.com/uny2-ops
-// @version      1.4.5
+// @version      1.4.6
 // @description  P-1-H Scannable ID QR workspace with a fixed-size Manager Actions button that disables when no QR data exists
 // @author       Ibrahim
 // @homepageURL  https://github.com/IbrahimaSy11/como-p1h-qr-codes
@@ -1020,7 +1020,6 @@ function startGeneration() {
 }
 
 btn.addEventListener('click', function () {
-  if (suppressClick) { suppressClick = false; return; }
   if (btn.disabled || launcherBusy || launcherCount <= 0) return;
   startGeneration();
 });
@@ -1158,6 +1157,6 @@ updateVisibility();
 mountLauncherInline();
 scheduleCountRefresh(40);
 
-console.log('[P1H-QR] v1.4.5 loaded — same size as Complete Task; disabled/grey at zero; QR value = Scannable ID');
+console.log('[P1H-QR] v1.4.6 loaded — same size as Complete Task; disabled/grey at zero; QR value = Scannable ID');
 
 })();
