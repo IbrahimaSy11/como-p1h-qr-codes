@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         COMO P-1-H Scannable ID QR Codes
 // @namespace    https://github.com/uny2-ops
-// @version      1.4.3
-// @description  Modern P-1-H QR workspace with reliable popup handling, live count, printable grid, and fast single-QR scan mode
+// @version      1.4.5
+// @description  P-1-H Scannable ID QR workspace with a fixed-size Manager Actions button that disables when no QR data exists
 // @author       Ibrahim
 // @homepageURL  https://github.com/IbrahimaSy11/como-p1h-qr-codes
 // @supportURL   https://github.com/IbrahimaSy11/como-p1h-qr-codes/issues
@@ -727,46 +727,72 @@ function openQRTab(items, win) {
 ══════════════════════════════════════════════════════════ */
 var style = document.createElement('style');
 style.textContent =
-  '#p1hqr-btn{position:fixed;bottom:20px;left:20px;z-index:99999;height:86px;min-width:320px;' +
-    'display:none;align-items:center;gap:16px;padding:0 20px 0 16px;border:1px solid rgba(255,255,255,.15);border-radius:15px;' +
-    'background:linear-gradient(180deg,#1f2937,#111827);color:#fff;font-family:"Segoe UI",system-ui,sans-serif;' +
-    'font-size:16px;font-weight:850;letter-spacing:.01em;box-shadow:0 10px 28px rgba(15,23,42,.28);cursor:pointer;user-select:none;' +
-    'transition:transform .16s ease,box-shadow .16s ease,background .16s ease;touch-action:none}' +
-  '#p1hqr-btn.visible{display:inline-flex}' +
-  '#p1hqr-btn:hover{transform:translateY(-1px);box-shadow:0 14px 34px rgba(15,23,42,.34)}' +
-  '#p1hqr-btn:active{transform:translateY(0) scale(.985)}' +
-  '#p1hqr-btn:focus-visible{outline:3px solid rgba(37,99,235,.35);outline-offset:3px}' +
-  '#p1hqr-btn.busy{background:linear-gradient(180deg,#4b5563,#374151);cursor:wait}' +
-  '#p1hqr-btn .p1h-icon{width:58px;height:58px;border-radius:16px;display:grid;place-items:center;background:#2563eb;color:#fff;font-size:22px;font-weight:950;flex:0 0 auto}' +
-  '#p1hqr-btn.busy .p1h-icon{background:#6b7280}' +
-  '#p1hqr-btn .p1h-copy{display:flex;flex-direction:column;align-items:flex-start;line-height:1.05;min-width:0}' +
-  '#p1hqr-btn .p1h-main{font-size:20px;font-weight:900;white-space:nowrap}' +
-  '#p1hqr-btn .p1h-sub{font-size:12px;font-weight:750;color:#cbd5e1;margin-top:5px;letter-spacing:.08em;text-transform:uppercase;white-space:nowrap}' +
-  '#p1hqr-btn .p1h-count{margin-left:auto;min-width:44px;height:44px;padding:0 11px;border-radius:999px;background:#fff;color:#111827;display:grid;place-items:center;font-size:15px;font-weight:950;font-variant-numeric:tabular-nums}' +
-  '#p1hqr-btn .p1h-count.zero{background:#374151;color:#cbd5e1}' +
-  '#p1hqr-toast{position:fixed;bottom:118px;left:20px;z-index:100000;max-width:min(420px,calc(100vw - 40px));' +
+  /* The launcher now lives INSIDE the site's Manager Actions button group.
+     No fixed/floating coordinates are used, so it cannot drift or be dragged. */
+  '#p1hqr-btn{position:static!important;float:none!important;left:auto!important;right:auto!important;top:auto!important;bottom:auto!important;' +
+    'z-index:auto!important;display:none;align-items:center;justify-content:center;gap:3px;' +
+    'margin:0!important;padding:0 6px!important;' +
+    'border:1px solid #2e6da4!important;border-radius:0!important;background:#337ab7!important;color:#fff!important;' +
+    'font-family:"Helvetica Neue",Helvetica,Arial,sans-serif!important;font-size:14px!important;font-weight:400!important;' +
+    'line-height:1.42857143!important;box-shadow:none!important;cursor:pointer;user-select:none;touch-action:auto;' +
+    'transform:none!important;transition:background .12s ease,border-color .12s ease!important;vertical-align:middle!important;' +
+    'white-space:nowrap!important;overflow:hidden!important}' +
+  '#p1hqr-btn.visible{display:inline-flex!important}' +
+  '#p1hqr-btn:not(:disabled):hover,#p1hqr-btn:not(:disabled):focus{background:#286090!important;border-color:#204d74!important;color:#fff!important;transform:none!important}' +
+  '#p1hqr-btn:not(:disabled):active{background:#204d74!important;border-color:#122b40!important;transform:none!important}' +
+  '#p1hqr-btn:focus-visible{outline:2px solid rgba(51,122,183,.35);outline-offset:2px}' +
+  '#p1hqr-btn.busy{background:#6b7280!important;border-color:#5b6470!important;cursor:wait!important;opacity:.72!important}' +
+  '#p1hqr-btn.no-data,#p1hqr-btn:disabled.no-data{background:#6b7280!important;border-color:#5b6470!important;color:#e5e7eb!important;cursor:not-allowed!important;opacity:.62!important;box-shadow:none!important}' +
+  '#p1hqr-btn .p1h-icon{display:none!important}' +
+  '#p1hqr-btn .p1h-copy{display:flex;align-items:center;min-width:0;overflow:hidden;line-height:1}' +
+  '#p1hqr-btn .p1h-main{font-size:10px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:clip}' +
+  '#p1hqr-btn .p1h-sub{display:none!important}' +
+  '#p1hqr-btn .p1h-count{flex:0 0 auto;min-width:14px;height:14px;padding:0 3px;border-radius:8px;background:#fff;color:#337ab7;' +
+    'display:grid;place-items:center;font-size:9px;font-weight:800;font-variant-numeric:tabular-nums}' +
+  '#p1hqr-btn .p1h-count.zero{background:rgba(255,255,255,.2);color:#fff}' +
+  /* Bootstrap 3 btn-group removes the inside corner between adjacent buttons.
+     Match that behavior even though this button is injected after Angular. */
+  '.btn-group>#p1hqr-btn:not(:first-child){margin-left:-1px!important}' +
+  '.btn-group>#p1hqr-btn:last-child{border-top-right-radius:4px!important;border-bottom-right-radius:4px!important}' +
+  '#p1hqr-toast{position:fixed;bottom:24px;left:24px;z-index:100000;max-width:min(420px,calc(100vw - 48px));' +
     'background:#111827;color:#fff;font:13px/1.42 "Segoe UI",system-ui,sans-serif;padding:11px 13px;border-radius:11px;' +
     'box-shadow:0 12px 34px rgba(0,0,0,.28);opacity:0;transform:translateY(7px);transition:opacity .16s ease,transform .16s ease;pointer-events:none}' +
   '#p1hqr-toast.show{opacity:1;transform:none}' +
   '#p1hqr-toast.err{background:#991b1b}' +
-  '@media(max-width:620px){#p1hqr-btn{bottom:12px;left:12px;height:72px;min-width:260px;border-radius:20px}#p1hqr-btn .p1h-icon{width:48px;height:48px}#p1hqr-toast{left:12px;bottom:98px;max-width:calc(100vw - 24px)}}' +
+  '@media(max-width:620px){#p1hqr-btn .p1h-main{font-size:9px}#p1hqr-toast{left:12px;bottom:12px;max-width:calc(100vw - 24px)}}' +
   '@media(prefers-reduced-motion:reduce){#p1hqr-btn,#p1hqr-toast{transition:none!important}}';
 document.head.appendChild(style);
 
 var btn = document.createElement('button');
 btn.id = 'p1hqr-btn';
+btn.className = 'btn btn-primary';
 btn.type = 'button';
 btn.innerHTML =
   '<span class="p1h-icon" aria-hidden="true">QR</span>' +
   '<span class="p1h-copy"><span class="p1h-main">' + TARGET_PREFIX + ' QR Codes</span>' +
     '<span class="p1h-sub">Scannable ID</span></span>' +
   '<span id="p1hqr-count" class="p1h-count zero" aria-label="0 QR codes">0</span>';
-btn.title = 'Generate QR codes from Scannable IDs of ' + TARGET_PREFIX + ' rows';
+btn.title = 'No ' + TARGET_PREFIX + ' Scannable IDs are available to generate.';
+btn.disabled = true;
+btn.setAttribute('aria-disabled', 'true');
+btn.classList.add('no-data');
 document.body.appendChild(btn);
 
 var countEl = btn.querySelector('#p1hqr-count');
 var mainLabelEl = btn.querySelector('.p1h-main');
 var subLabelEl = btn.querySelector('.p1h-sub');
+
+var launcherCount = 0;
+var launcherBusy = false;
+
+function syncLauncherDisabledState() {
+  var noData = launcherCount <= 0;
+  var disabled = launcherBusy || noData;
+
+  btn.disabled = disabled;
+  btn.setAttribute('aria-disabled', disabled ? 'true' : 'false');
+  btn.classList.toggle('no-data', noData && !launcherBusy);
+}
 
 var toastEl = document.createElement('div');
 toastEl.id = 'p1hqr-toast';
@@ -785,105 +811,112 @@ function toast(msg, isErr) {
 
 function updateLauncherCount(count) {
   count = Math.max(0, Number(count) || 0);
+  launcherCount = count;
+
   countEl.textContent = String(count);
   countEl.setAttribute('aria-label', count + ' QR code' + (count === 1 ? '' : 's'));
   countEl.classList.toggle('zero', count === 0);
+
   btn.title = count
     ? 'Open ' + count + ' ' + TARGET_PREFIX + ' QR code' + (count === 1 ? '' : 's')
-    : 'Generate QR codes from Scannable IDs of ' + TARGET_PREFIX + ' rows';
+    : 'No ' + TARGET_PREFIX + ' Scannable IDs are available to generate.';
+
+  syncLauncherDisabledState();
 }
 
 function setBusy(v) {
-  btn.classList.toggle('busy', !!v);
-  btn.setAttribute('aria-busy', v ? 'true' : 'false');
-  if (v) {
-    mainLabelEl.textContent = 'Building QR Codes';
+  launcherBusy = !!v;
+  btn.classList.toggle('busy', launcherBusy);
+  btn.setAttribute('aria-busy', launcherBusy ? 'true' : 'false');
+
+  if (launcherBusy) {
+    mainLabelEl.textContent = 'Building QR';
     subLabelEl.textContent = 'Please wait';
   } else {
     mainLabelEl.textContent = TARGET_PREFIX + ' QR Codes';
     subLabelEl.textContent = 'Scannable ID';
   }
+
+  syncLauncherDisabledState();
 }
 
-/* Draggable launcher using pointer events. Position is remembered. */
-var POS_KEY = 'P1H_QR_BUTTON_POS_V2';
-var drag = null, suppressClick = false;
+/* Fixed Manager Actions placement.
+   The button is always inserted immediately AFTER the site's Complete Task
+   button. There are no drag handlers and no saved screen coordinates. */
+function findCompleteTaskButton() {
+  var direct = document.querySelector(
+    'button[ng-click*="showCompleteJobDialog"],' +
+    'button[data-ng-click*="showCompleteJobDialog"]'
+  );
+  if (direct) return direct;
 
-function clampLauncher(left, top) {
-  var r = btn.getBoundingClientRect();
-  var w = r.width || 188, h = r.height || 52;
-  var maxLeft = Math.max(8, window.innerWidth - w - 8);
-  var maxTop  = Math.max(8, window.innerHeight - h - 8);
-  return {
-    left: Math.min(maxLeft, Math.max(8, left)),
-    top: Math.min(maxTop, Math.max(8, top))
-  };
+  /* Fallback for a future Angular markup change: search only normal buttons
+     and require the exact visible label "Complete Task". */
+  var buttons = document.querySelectorAll('.btn-group button, .job-details button');
+  for (var i = 0; i < buttons.length; i++) {
+    if (String(buttons[i].textContent || '').replace(/\s+/g, ' ').trim() === 'Complete Task') {
+      return buttons[i];
+    }
+  }
+  return null;
 }
 
-function saveLauncherPosition() {
-  try {
-    var r = btn.getBoundingClientRect();
-    localStorage.setItem(POS_KEY, JSON.stringify({ left: Math.round(r.left), top: Math.round(r.top) }));
-  } catch (e) {}
+function syncLauncherSizeToComplete(complete) {
+  if (!complete) return;
+
+  /* Match the site's Complete Task button exactly. Using its rendered
+     dimensions makes this survive browser zoom and Amazon CSS changes. */
+  var rect = null;
+  try { rect = complete.getBoundingClientRect(); } catch(e) {}
+  if (!rect || rect.width <= 0 || rect.height <= 0) return;
+
+  var w = Math.max(1, Math.round(rect.width));
+  var h = Math.max(1, Math.round(rect.height));
+
+  btn.style.setProperty('width', w + 'px', 'important');
+  btn.style.setProperty('min-width', w + 'px', 'important');
+  btn.style.setProperty('max-width', w + 'px', 'important');
+  btn.style.setProperty('height', h + 'px', 'important');
+  btn.style.setProperty('min-height', h + 'px', 'important');
+  btn.style.setProperty('max-height', h + 'px', 'important');
 }
 
+function mountLauncherInline() {
+  var complete = findCompleteTaskButton();
+  if (!complete) return false;
+
+  var group = complete.closest ? complete.closest('.btn-group') : complete.parentElement;
+  if (!group) group = complete.parentElement;
+  if (!group) return false;
+
+  /* Always keep it directly after Complete Task. If Angular replaces or
+     reorders the button group, the lifecycle observer simply restores this
+     exact location. */
+  if (btn.parentNode !== group || complete.nextElementSibling !== btn) {
+    if (complete.nextSibling) group.insertBefore(btn, complete.nextSibling);
+    else group.appendChild(btn);
+  }
+
+  /* Inline placement must never inherit any stale position coordinates from
+     older script versions. */
+  btn.style.position = 'static';
+  btn.style.left = '';
+  btn.style.top = '';
+  btn.style.right = '';
+  btn.style.bottom = '';
+  btn.style.transform = '';
+
+  syncLauncherSizeToComplete(complete);
+  return true;
+}
+
+function saveLauncherPosition() {}
 function restoreLauncherPosition() {
-  try {
-    var raw = localStorage.getItem(POS_KEY);
-    if (!raw) return;
-    var p = JSON.parse(raw);
-    if (!p || !isFinite(p.left) || !isFinite(p.top)) return;
-    var clamped = clampLauncher(p.left, p.top);
-    btn.style.left = clamped.left + 'px';
-    btn.style.top = clamped.top + 'px';
-    btn.style.bottom = 'auto';
-    btn.style.right = 'auto';
-  } catch (e) {}
+  mountLauncherInline();
 }
-
-btn.addEventListener('pointerdown', function (e) {
-  if (e.button !== undefined && e.button !== 0) return;
-  var r = btn.getBoundingClientRect();
-  drag = {
-    id: e.pointerId,
-    startX: e.clientX,
-    startY: e.clientY,
-    offX: e.clientX - r.left,
-    offY: e.clientY - r.top,
-    moved: false
-  };
-  try { btn.setPointerCapture(e.pointerId); } catch (e0) {}
-});
-
-btn.addEventListener('pointermove', function (e) {
-  if (!drag || e.pointerId !== drag.id) return;
-  var dx = e.clientX - drag.startX, dy = e.clientY - drag.startY;
-  if (!drag.moved && Math.sqrt(dx * dx + dy * dy) < 5) return;
-  drag.moved = true;
-  var p = clampLauncher(e.clientX - drag.offX, e.clientY - drag.offY);
-  btn.style.left = p.left + 'px';
-  btn.style.top  = p.top + 'px';
-  btn.style.bottom = 'auto';
-  btn.style.right = 'auto';
-  e.preventDefault();
-});
-
-function finishDrag(e) {
-  if (!drag || (e && e.pointerId !== undefined && e.pointerId !== drag.id)) return;
-  suppressClick = !!drag.moved;
-  if (drag.moved) saveLauncherPosition();
-  try { btn.releasePointerCapture(drag.id); } catch (e0) {}
-  drag = null;
-}
-btn.addEventListener('pointerup', finishDrag);
-btn.addEventListener('pointercancel', finishDrag);
 
 window.addEventListener('resize', function () {
-  if (!btnVisible || !btn.style.top) return;
-  var r = btn.getBoundingClientRect();
-  var p = clampLauncher(r.left, r.top);
-  btn.style.left = p.left + 'px';
-  btn.style.top = p.top + 'px';
+  if (btnVisible) mountLauncherInline();
 });
 
 /* Maximum automatic retries while Angular finishes rendering the table. */
@@ -988,7 +1021,7 @@ function startGeneration() {
 
 btn.addEventListener('click', function () {
   if (suppressClick) { suppressClick = false; return; }
-  if (btn.classList.contains('busy')) return;
+  if (btn.disabled || launcherBusy || launcherCount <= 0) return;
   startGeneration();
 });
 
@@ -998,12 +1031,22 @@ btn.addEventListener('click', function () {
 ══════════════════════════════════════════════════════════ */
 var btnVisible = false;
 function setVisible(v) {
-  if (v === btnVisible) return;
+  if (v) {
+    /* Never show the launcher anywhere except beside Complete Task. */
+    if (!mountLauncherInline()) {
+      v = false;
+    }
+  }
+
+  var changed = v !== btnVisible;
   btnVisible = v;
   btn.classList.toggle('visible', v);
+
   if (v) {
-    restoreLauncherPosition();
-    scheduleCountRefresh(0);
+    /* Re-assert exact placement even when visibility itself did not change,
+       because Angular can rebuild the Manager Actions group in-place. */
+    mountLauncherInline();
+    if (changed) scheduleCountRefresh(0);
   }
 }
 
@@ -1112,9 +1155,9 @@ new MutationObserver(function () {
 }).observe(document.body, { childList: true, subtree: true });
 
 updateVisibility();
-restoreLauncherPosition();
+mountLauncherInline();
 scheduleCountRefresh(40);
 
-console.log('[P1H-QR] v1.4.3 loaded — streamlined QR workspace, scan mode only, no workspace launcher/search/print, QR value = Scannable ID');
+console.log('[P1H-QR] v1.4.5 loaded — same size as Complete Task; disabled/grey at zero; QR value = Scannable ID');
 
 })();
