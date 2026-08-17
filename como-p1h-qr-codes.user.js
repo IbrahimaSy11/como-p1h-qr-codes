@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         COMO P-1-H Scannable ID QR Codes
 // @namespace    https://github.com/uny2-ops
-// @version      1.4.7
+// @version      1.4.8
 // @description  P-1-H Scannable ID QR workspace with a fixed-size Manager Actions button that disables when no QR data exists
 // @author       Ibrahim
 // @homepageURL  https://github.com/IbrahimaSy11/como-p1h-qr-codes
@@ -733,22 +733,22 @@ style.textContent =
   '#p1hqr-btn{position:static!important;float:none!important;left:auto!important;right:auto!important;top:auto!important;bottom:auto!important;' +
     'z-index:auto!important;display:none;align-items:center;justify-content:center;gap:3px;' +
     'margin:0!important;padding:0 6px!important;' +
-    'border:1px solid #2e6da4!important;border-radius:0!important;background:#337ab7!important;color:#fff!important;' +
+    'border:1px solid transparent!important;border-radius:0!important;background:transparent!important;color:inherit!important;' +
     'font-family:"Helvetica Neue",Helvetica,Arial,sans-serif!important;font-size:14px!important;font-weight:400!important;' +
     'line-height:1.42857143!important;box-shadow:none!important;cursor:pointer;user-select:none;touch-action:auto;' +
-    'transform:none!important;transition:background .12s ease,border-color .12s ease!important;vertical-align:middle!important;' +
-    'white-space:nowrap!important;overflow:hidden!important}' +
-  '#p1hqr-btn.visible{display:inline-flex!important}' +
-  '#p1hqr-btn:not(:disabled):hover,#p1hqr-btn:not(:disabled):focus{background:#286090!important;border-color:#204d74!important;color:#fff!important;transform:none!important}' +
-  '#p1hqr-btn:not(:disabled):active{background:#204d74!important;border-color:#122b40!important;transform:none!important}' +
-  '#p1hqr-btn:focus-visible{outline:2px solid rgba(51,122,183,.35);outline-offset:2px}' +
-  '#p1hqr-btn.busy{background:#6b7280!important;border-color:#5b6470!important;cursor:wait!important;opacity:.72!important}' +
-  '#p1hqr-btn.no-data,#p1hqr-btn:disabled.no-data{background:#6b7280!important;border-color:#5b6470!important;color:#e5e7eb!important;cursor:not-allowed!important;opacity:.62!important;box-shadow:none!important}' +
+    'transform:none!important;transition:none!important;vertical-align:middle!important;' +
+    'white-space:nowrap!important;overflow:hidden!important;visibility:hidden!important}' +
+  '#p1hqr-btn.visible{display:inline-flex!important;visibility:visible!important}' +
+  '#p1hqr-btn:not(:disabled):hover,#p1hqr-btn:not(:disabled):focus{filter:none!important;transform:none!important}' +
+  '#p1hqr-btn:not(:disabled):active{filter:none!important;transform:none!important}' +
+  '#p1hqr-btn:focus-visible{outline:2px solid currentColor;outline-offset:2px}' +
+  '#p1hqr-btn.busy{cursor:wait!important;opacity:.72!important}' +
+  '#p1hqr-btn.no-data,#p1hqr-btn:disabled.no-data{cursor:not-allowed!important;opacity:.65!important;box-shadow:none!important}' +
   '#p1hqr-btn .p1h-icon{display:none!important}' +
   '#p1hqr-btn .p1h-copy{display:flex;align-items:center;min-width:0;overflow:hidden;line-height:1}' +
   '#p1hqr-btn .p1h-main{font-size:10px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:clip}' +
   '#p1hqr-btn .p1h-sub{display:none!important}' +
-  '#p1hqr-btn .p1h-count{flex:0 0 auto;min-width:14px;height:14px;padding:0 3px;border-radius:8px;background:#fff;color:#337ab7;' +
+  '#p1hqr-btn .p1h-count{flex:0 0 auto;min-width:14px;height:14px;padding:0 3px;border-radius:8px;background:#fff;color:currentColor;' +
     'display:grid;place-items:center;font-size:9px;font-weight:800;font-variant-numeric:tabular-nums}' +
   '#p1hqr-btn .p1h-count.zero{background:rgba(255,255,255,.2);color:#fff}' +
   /* Bootstrap 3 btn-group removes the inside corner between adjacent buttons.
@@ -862,17 +862,23 @@ function findCompleteTaskButton() {
   return null;
 }
 
+var lastLauncherSizeKey = '';
+var lastLauncherThemeKey = '';
+
 function syncLauncherSizeToComplete(complete) {
   if (!complete) return;
 
-  /* Match the site's Complete Task button exactly. Using its rendered
-     dimensions makes this survive browser zoom and Amazon CSS changes. */
+  /* Match the site's Complete Task button exactly, but only write styles when
+     the rendered dimensions actually changed. This avoids needless reflow. */
   var rect = null;
   try { rect = complete.getBoundingClientRect(); } catch(e) {}
   if (!rect || rect.width <= 0 || rect.height <= 0) return;
 
   var w = Math.max(1, Math.round(rect.width));
   var h = Math.max(1, Math.round(rect.height));
+  var key = w + 'x' + h;
+  if (key === lastLauncherSizeKey) return;
+  lastLauncherSizeKey = key;
 
   btn.style.setProperty('width', w + 'px', 'important');
   btn.style.setProperty('min-width', w + 'px', 'important');
@@ -880,6 +886,48 @@ function syncLauncherSizeToComplete(complete) {
   btn.style.setProperty('height', h + 'px', 'important');
   btn.style.setProperty('min-height', h + 'px', 'important');
   btn.style.setProperty('max-height', h + 'px', 'important');
+}
+
+function syncLauncherAppearanceToComplete(complete) {
+  if (!complete) return;
+
+  var cs = null;
+  try { cs = window.getComputedStyle(complete); } catch(e) {}
+  if (!cs) return;
+
+  /* Copy the actual rendered Manager Actions button colors instead of using a
+     hard-coded blue/grey theme. The P-1-H button therefore visually matches
+     Complete Task on this site's current Bootstrap/theme build. */
+  var vals = {
+    backgroundColor: cs.backgroundColor,
+    borderTopColor: cs.borderTopColor,
+    borderRightColor: cs.borderRightColor,
+    borderBottomColor: cs.borderBottomColor,
+    borderLeftColor: cs.borderLeftColor,
+    color: cs.color,
+    boxShadow: cs.boxShadow,
+    fontFamily: cs.fontFamily,
+    fontWeight: cs.fontWeight
+  };
+
+  var key = [
+    vals.backgroundColor, vals.borderTopColor, vals.borderRightColor,
+    vals.borderBottomColor, vals.borderLeftColor, vals.color,
+    vals.boxShadow, vals.fontFamily, vals.fontWeight
+  ].join('|');
+
+  if (key === lastLauncherThemeKey) return;
+  lastLauncherThemeKey = key;
+
+  btn.style.setProperty('background-color', vals.backgroundColor, 'important');
+  btn.style.setProperty('border-top-color', vals.borderTopColor, 'important');
+  btn.style.setProperty('border-right-color', vals.borderRightColor, 'important');
+  btn.style.setProperty('border-bottom-color', vals.borderBottomColor, 'important');
+  btn.style.setProperty('border-left-color', vals.borderLeftColor, 'important');
+  btn.style.setProperty('color', vals.color, 'important');
+  btn.style.setProperty('box-shadow', vals.boxShadow, 'important');
+  btn.style.setProperty('font-family', vals.fontFamily, 'important');
+  btn.style.setProperty('font-weight', vals.fontWeight, 'important');
 }
 
 function mountLauncherInline() {
@@ -908,6 +956,7 @@ function mountLauncherInline() {
   btn.style.transform = '';
 
   syncLauncherSizeToComplete(complete);
+  syncLauncherAppearanceToComplete(complete);
   return true;
 }
 
@@ -1099,12 +1148,14 @@ function onNavigate() {
   generationTimer = null;
   closePendingWindow();
   setBusy(false);
-  setVisible(false);
   updateLauncherCount(0);
   tblAt = 0;
   tblRes = false;
   clearTimeout(toastTimer);
   toastEl.className = '';
+
+  /* Do not force-hide first. Angular can push/replace history while staying on
+     the same job-details screen; hide-then-show caused visible flicker. */
   updateVisibility();
 }
 
@@ -1142,23 +1193,65 @@ setInterval(function () {
   }
 }, 700);
 
-/* One observer. The launcher itself mounts immediately the moment Angular
-   inserts Complete Task. All heavier count/table work stays coalesced so this
-   does not turn into a high-frequency page scan. */
+/* One observer. Keep launcher movement targeted to Manager Actions changes.
+   Ordinary table/count mutations no longer cause repeated remount/resize work,
+   which keeps the button visually still. */
 var domRefreshTimer = null;
+
+function mutationMayAffectLauncher(m) {
+  if (!m) return false;
+
+  var t = m.target;
+  try {
+    if (t === btn || (btn.contains && btn.contains(t))) return false;
+  } catch(e) {}
+
+  try {
+    if (t && t.nodeType === 1 &&
+        (t.matches && (t.matches('.btn-group,.job-details') ||
+                       t.matches('button[ng-click*="showCompleteJobDialog"],button[data-ng-click*="showCompleteJobDialog"]')))) {
+      return true;
+    }
+    if (t && t.nodeType === 1 && t.closest && t.closest('.btn-group')) return true;
+  } catch(e2) {}
+
+  var lists = [m.addedNodes || [], m.removedNodes || []];
+  for (var li = 0; li < lists.length; li++) {
+    for (var i = 0; i < lists[li].length; i++) {
+      var n = lists[li][i];
+      if (!n || n.nodeType !== 1) continue;
+      try {
+        if ((n.matches && (n.matches('.btn-group') ||
+                           n.matches('button[ng-click*="showCompleteJobDialog"],button[data-ng-click*="showCompleteJobDialog"]'))) ||
+            (n.querySelector && n.querySelector(
+              '.btn-group,button[ng-click*="showCompleteJobDialog"],button[data-ng-click*="showCompleteJobDialog"]'
+            ))) return true;
+      } catch(e3) {}
+    }
+  }
+  return false;
+}
+
 new MutationObserver(function (mutations) {
-  /* Fast path: if Complete Task now exists, mount/show immediately.
-     This is only a tiny selector lookup and avoids the old 240ms visual delay. */
-  if (!btnVisible && !isGeneratedWorkspace()) {
+  var launcherStructureChanged = !btn.isConnected;
+
+  if (!launcherStructureChanged) {
+    for (var i = 0; i < mutations.length; i++) {
+      if (mutationMayAffectLauncher(mutations[i])) {
+        launcherStructureChanged = true;
+        break;
+      }
+    }
+  }
+
+  if (launcherStructureChanged && !isGeneratedWorkspace()) {
     var completeNow = findCompleteTaskButton();
     if (completeNow) {
       setVisible(true);
       scheduleCountRefresh(0);
+    } else if (btnVisible) {
+      setVisible(false);
     }
-  } else if (btnVisible) {
-    /* Angular may rebuild the same btn-group. Re-assert placement immediately
-       without waiting for the slower general refresh. */
-    mountLauncherInline();
   }
 
   /* Slow/coalesced path for table/count/route state. */
@@ -1181,6 +1274,6 @@ if (findCompleteTaskButton()) {
   scheduleCountRefresh(0);
 }
 
-console.log('[P1H-QR] v1.4.7 loaded — instant Manager Actions mount; same size as Complete Task; disabled/grey at zero; QR value = Scannable ID');
+console.log('[P1H-QR] v1.4.8 loaded — stable no-flicker mount; matches Complete Task color/size; QR value = Scannable ID');
 
 })();
